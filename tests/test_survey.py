@@ -53,6 +53,19 @@ def test_detect_rejects_pure_noise():
     assert detect(noise, FS) == []
 
 
+@pytest.mark.parametrize("sep", [150e3, 100e3, 50e3])
+def test_detect_separates_adjacent_channels(sep):
+    # two narrowband emitters a few bandwidths apart must NOT merge into one blob
+    # (the merge gap heals intra-signal splits, never swallows a neighbour)
+    rng = np.random.default_rng(0)
+    a = _emitter("qpsk", 20e3, -sep / 2, 0.0, 1, 8000)
+    b = _emitter("qpsk", 20e3, +sep / 2, 0.0, 2, 8000)
+    mix = a + b + np.sqrt(0.03 / 2) * (rng.standard_normal(N) + 1j * rng.standard_normal(N))
+    dets = detect(mix, FS)
+    assert len(dets) == 2
+    assert abs(dets[0].fc + sep / 2) < 5e3 and abs(dets[1].fc - sep / 2) < 5e3
+
+
 def test_survey_recovers_every_emitter():
     # the audit's confidently-wrong single answer becomes three correct ones
     mix, _ = _mixture()

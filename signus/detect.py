@@ -53,10 +53,12 @@ def detect(x: np.ndarray, fs: float, *, nfft: int = 4096, overlap: float = 0.5,
     lab, n = ndimage.label(mask)
     regions = [np.where(lab == i)[0] for i in range(1, n + 1)]
     regions = [r for r in regions if r.size >= min_bw_bins]
-    gap = int(0.03 * s.size)                              # merge near-adjacent blobs
     merged: list[np.ndarray] = []
     for r in sorted(regions, key=lambda r: r[0]):
-        if merged and r[0] - merged[-1][-1] <= gap:
+        # heal an intra-signal split (gap small vs the signal's OWN width) without
+        # swallowing a genuinely separate neighbour -- cap the merge gap at half the
+        # narrower blob, so adjacent channels (e.g. the 25 kHz marine raster) survive
+        if merged and r[0] - merged[-1][-1] <= max(close, min(merged[-1].size, r.size) // 2):
             merged[-1] = np.arange(merged[-1][0], r[-1] + 1)
         else:
             merged.append(r)
