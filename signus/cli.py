@@ -256,7 +256,7 @@ def _survey(args: argparse.Namespace) -> int:
         baud = f"{r.baud:.0f}" if r else "—"
         lock = f"{r.lock:.0f}" if r else "—"
         kind = {"linear": "디지털", "fsk": "FSK", "analog": "아날로그",
-                "tone": "순수톤", "tooshort": "너무짧음"}.get(e.kind, e.kind)
+                "tone": "순수톤", "tooshort": "너무짧음", "error": "오류"}.get(e.kind, e.kind)
         print(f"{i:>2} {_fhz(e.abs_fc):>12} {_fhz(e.detection.bw):>10} {kind:>7}"
               f" {mod:>7} {baud:>11} {lock:>5}")
     if args.report:

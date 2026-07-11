@@ -110,6 +110,42 @@ def test_triage_flags_analog_and_tone_not_forced_to_constellation():
     assert family(x[:20000], fs) == "linear"
 
 
+def test_detect_degenerate_inputs_never_crash():
+    assert detect(np.zeros(0, complex), FS) == []          # empty -> [], not AxisError
+    for k in (1, 100, 255, 256):                           # short record -> no crash
+        detect(np.random.default_rng(k).standard_normal(k).astype(complex), FS)
+
+
+def test_detect_signal_at_band_edge_is_one_emitter():
+    # a signal straddling +-fs/2 must be one detection, not two edge halves
+    rng = np.random.default_rng(0)
+    x = _emitter("qpsk", 40e3, 0.0, 0.0, 1, 8000)          # padded to length N
+    edge = x * np.exp(2j * np.pi * (FS / 2) * np.arange(N) / FS)
+    edge = edge + np.sqrt(0.02 / 2) * (rng.standard_normal(N) + 1j * rng.standard_normal(N))
+    dets = detect(edge, FS)
+    assert len(dets) == 1
+    assert abs(abs(dets[0].fc) - FS / 2) < 5e3             # near the Nyquist edge
+
+
+def test_survey_one_bad_channel_does_not_abort(monkeypatch):
+    # a channel whose analyze() raises must be marked 'error', not sink the whole survey
+    import signus.pipeline as pl
+    mix, _ = _mixture()
+    orig, seen = pl.analyze, {"n": 0}
+
+    def flaky(ch, meta, diff=False):
+        seen["n"] += 1
+        if seen["n"] == 1:
+            raise ValueError("simulated degenerate channel")
+        return orig(ch, meta, diff=diff)
+
+    monkeypatch.setattr(pl, "analyze", flaky)
+    s = pl.survey(mix, Meta(FS, "iq", "f32", "le", False))
+    assert len(s.emitters) == 3
+    assert sum(e.kind == "error" for e in s.emitters) == 1
+    assert any(e.result is not None for e in s.emitters)   # the others still demodulated
+
+
 def test_survey_reports_analog_emitter():
     # an FM-voice channel dropped into a wide capture must be reported, not demodulated
     rng = np.random.default_rng(0)

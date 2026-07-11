@@ -234,7 +234,7 @@ def analyze_file(path: str, fs: float | None = None, fmt: str | None = None,
 @dataclass
 class Emitter:
     detection: Detection
-    kind: str                      # 'linear' | 'fsk' | 'analog' | 'tone' | 'tooshort'
+    kind: str                      # linear|fsk|analog|tone|tooshort|error
     abs_fc: float                  # emitter carrier vs capture centre (Hz)
     result: Result | None = None   # demod result for digital kinds
 
@@ -276,9 +276,13 @@ def survey(x: np.ndarray, meta: Meta, *, diff: bool = False, **detect_kw) -> Sur
             continue
         kind = triage.family(ch, fs_ch)
         if kind in ("linear", "fsk"):
-            # triage only gates digital vs not; analyze's own family is authoritative
-            r = analyze(ch, Meta(fs_ch, "iq", "f32", "le", False), diff=diff)
-            emitters.append(Emitter(d, r.family, d.fc + r.fc, r))
+            # triage only gates digital vs not; analyze's own family is authoritative.
+            # Isolate each channel: a degenerate one must not abort the whole survey.
+            try:
+                r = analyze(ch, Meta(fs_ch, "iq", "f32", "le", False), diff=diff)
+                emitters.append(Emitter(d, r.family, d.fc + r.fc, r))
+            except Exception:
+                emitters.append(Emitter(d, "error", d.fc))
         else:
             emitters.append(Emitter(d, kind, d.fc))
     return Survey(meta, emitters)

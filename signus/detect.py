@@ -37,7 +37,10 @@ def detect(x: np.ndarray, fs: float, *, nfft: int = 4096, overlap: float = 0.5,
            thr_db: float = 6.0, min_bw_bins: int = 3) -> list[Detection]:
     """Detect emitters as (fc, bw, t0, t1) boxes, time/frequency ordered by fc.
     Empty capture -> []; a single signal filling the band -> one whole-band box."""
-    nfft = int(min(nfft, 1 << max(8, int(np.log2(max(x.size // 16, 256))))))
+    if x.size == 0:
+        return []
+    # nfft never exceeds the record (else stft rejects an over-long window)
+    nfft = int(min(nfft, x.size, 1 << max(8, int(np.log2(max(x.size // 16, 256))))))
     win = get_window("blackmanharris", nfft)
     f, t, z = stft(x, fs=fs, window=win, nperseg=nfft, noverlap=int(nfft * overlap),
                    return_onesided=False, boundary=None, padded=False)
@@ -62,6 +65,10 @@ def detect(x: np.ndarray, fs: float, *, nfft: int = 4096, overlap: float = 0.5,
             merged[-1] = np.arange(merged[-1][0], r[-1] + 1)
         else:
             merged.append(r)
+    if len(merged) >= 2:  # frequency is circular: heal a signal straddling +-fs/2
+        wrap_gap = (s.size - 1 - merged[-1][-1]) + merged[0][0]
+        if wrap_gap <= max(close, min(merged[0].size, merged[-1].size) // 2):
+            merged[0] = np.concatenate([merged.pop(), merged[0]])  # wraps the edge
 
     dets = [_measure(r, s, floor, p, f, t, fs, x.size) for r in merged]
     if not dets and s.max() > 10 ** (thr_db / 10) * np.percentile(s, 20):
@@ -73,19 +80,28 @@ def detect(x: np.ndarray, fs: float, *, nfft: int = 4096, overlap: float = 0.5,
 
 def _measure(r: np.ndarray, s: np.ndarray, floor: np.ndarray, p: np.ndarray,
              f: np.ndarray, t: np.ndarray, fs: float, n: int) -> Detection:
-    """Estimate fc (floor-subtracted centroid), 99%-power bw, and time extent."""
-    lo, hi = r[0], r[-1]
-    w0, w1 = max(0, lo - 3), min(s.size, hi + 4)         # widen for skirts
-    idx = np.arange(w0, w1)
+    """Estimate fc (floor-subtracted centroid), 99%-power bw, and time extent.
+    Handles a wrapped index set (a signal straddling +-fs/2, non-contiguous)."""
+    wrapped = r.size > 1 and not np.all(np.diff(r) == 1)
+    if wrapped:
+        idx = r                                          # already spans the edge
+        fr = f[idx].astype(float).copy()
+        fr[idx < s.size // 2] += fs                      # lift the -fs/2 side onto a line
+    else:
+        idx = np.arange(max(0, r[0] - 3), min(s.size, r[-1] + 4))  # widen for skirts
+        fr = f[idx]
     wgt = np.maximum(s[idx] - floor[idx], 0)
-    fc = float(np.sum(f[idx] * wgt) / (np.sum(wgt) + 1e-30))
-    cs = np.cumsum(wgt) / (np.sum(wgt) + 1e-30)
-    f_lo = f[idx][np.searchsorted(cs, 0.005)]
-    f_hi = f[idx][min(np.searchsorted(cs, 0.995), idx.size - 1)]
+    fc = float(np.sum(fr * wgt) / (np.sum(wgt) + 1e-30))
+    o = np.argsort(fr)
+    cs = np.cumsum(wgt[o]) / (np.sum(wgt) + 1e-30)
+    f_lo = fr[o][np.searchsorted(cs, 0.005)]
+    f_hi = fr[o][min(np.searchsorted(cs, 0.995), idx.size - 1)]
     bw = float(abs(f_hi - f_lo))
-    band = p[lo:hi + 1, :].sum(axis=0)                   # time profile of the band
+    if fc >= fs / 2:                                     # fold a wrapped centroid back
+        fc -= fs
+    band = p[idx, :].sum(axis=0)                         # time profile of the band
     on = np.where(band > max(np.median(band) * 2.0, band.max() * 0.1))[0]
     t0 = int(t[on[0]] * fs) if on.size else 0
     t1 = int(t[min(on[-1], t.size - 1)] * fs) if on.size else n
-    snr = float(10 * np.log10(s[lo:hi + 1].max() / (np.median(floor) + 1e-30)))
+    snr = float(10 * np.log10(s[idx].max() / (np.median(floor) + 1e-30)))
     return Detection(fc, bw, t0, t1, snr)
