@@ -250,6 +250,14 @@ class Emitter:
                        mer_db=_r(r.mer_db), evm=_r(r.evm, 4), family=r.family)
         return doc
 
+    def to_detail(self) -> dict:
+        """Web drill-down payload: the box summary plus, for a digital emitter, the
+        full analyze result so the UI reuses its single-signal detail view verbatim."""
+        doc = self.to_json()
+        if self.result is not None:
+            doc["result"] = self.result.to_json()
+        return doc
+
 
 @dataclass
 class Survey:
@@ -286,6 +294,23 @@ def survey(x: np.ndarray, meta: Meta, *, diff: bool = False, **detect_kw) -> Sur
         else:
             emitters.append(Emitter(d, kind, d.fc))
     return Survey(meta, emitters)
+
+
+def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
+    """Web survey payload for /api/survey. When detect sees <=1 emitter the capture
+    is effectively one signal -> 'single' mode returns the UNCHANGED direct analyze()
+    result (correct fc, matches /api/analyze). Otherwise 'survey' mode adds a whole-
+    capture overview waterfall and every emitter's drill-down detail. Additive: does
+    not alter survey()/Survey/Emitter, so CLI + existing tests are unaffected."""
+    xa = dsp.analytic(x)
+    xa = xa - xa.mean()
+    if len(detect(xa, meta.fs)) <= 1:
+        return {"mode": "single", "result": analyze(x, meta, diff=diff).to_json()}
+    sv = survey(x, meta, diff=diff)
+    return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt,
+            "overview": {"fs": meta.fs, "spectrum": spectrum(xa, meta.fs),
+                         "waterfall": waterfall(xa, meta.fs)},
+            "emitters": [e.to_detail() for e in sv.emitters]}
 
 
 def survey_file(path: str, fs: float | None = None, fmt: str | None = None,

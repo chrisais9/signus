@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .pipeline import analyze
+from .pipeline import analyze, survey_web
 from .sigio import Meta, decode, parse_name
 
 _WEB = Path(__file__).resolve().parent.parent / "web"
@@ -27,9 +27,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _meta(self, q: dict) -> Meta:
+        """Build Meta from query params with filename fallback; raise on unknown."""
+        name = q.get("name", [""])[0]
+        m = parse_name(name)
+        meta = Meta(float(q["fs"][0]) if "fs" in q else m.fs,
+                    q.get("fmt", [m.fmt])[0], q.get("dtype", [m.dtype])[0],
+                    q.get("endian", [m.endian])[0],
+                    q.get("bitrev", ["1" if m.bitrev else "0"])[0] == "1")
+        if not meta.ok():
+            raise ValueError(f"샘플레이트/포맷을 알 수 없습니다: {name}")
+        return meta
+
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         url = urlparse(self.path)
-        if url.path != "/api/analyze":
+        if url.path not in ("/api/analyze", "/api/survey"):
             self._json(404, {"error": "not found"})
             return
         q = parse_qs(url.query)
@@ -41,14 +53,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(413, {"error": "파일이 너무 큽니다 (최대 256MB)"})
             return
         try:
-            name = q.get("name", [""])[0]
-            m = parse_name(name)
-            meta = Meta(float(q["fs"][0]) if "fs" in q else m.fs,
-                        q.get("fmt", [m.fmt])[0], q.get("dtype", [m.dtype])[0],
-                        q.get("endian", [m.endian])[0],
-                        q.get("bitrev", ["1" if m.bitrev else "0"])[0] == "1")
-            if not meta.ok():
-                raise ValueError(f"샘플레이트/포맷을 알 수 없습니다: {name}")
+            meta = self._meta(q)
             burst = int(q["burst"][0]) if "burst" in q else None
             x = decode(self.rfile.read(n), meta)
             if x.size < 256:
@@ -57,7 +62,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
             return
         try:
-            self._json(200, analyze(x, meta, burst=burst).to_json())
+            out = survey_web(x, meta) if url.path == "/api/survey" \
+                else analyze(x, meta, burst=burst).to_json()
+            self._json(200, out)
         except Exception as exc:  # surface DSP failures to the UI
             self._json(500, {"error": f"분석 실패: {exc}"})
 

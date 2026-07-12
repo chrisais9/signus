@@ -40,9 +40,12 @@
 
 1. `xa = dsp.analytic(x); xa -= xa.mean()` (단일-신호 경로 보존을 위해 여기서 한 번 계산).
 2. `dets = detect(xa, meta.fs)`.
-3. **단일-충전 분기(현재 동작 무손실 보존):** `len(dets)==1 and dets[0].bw >= 0.5*meta.fs` 이면
-   → `return {"mode": "single", "result": analyze(x, meta, diff=diff).to_json()}`.
-   (채널화 없이 기존 경로 그대로 → UI가 받는 데이터가 현재와 **동일**.)
+3. **단일 분기(개수 기준, 현재 동작 무손실 보존):** `len(dets) <= 1` 이면(캡처가 사실상 단일 신호 —
+   현재 CORE 케이스 전부 여기 해당, detect가 1박스) → `return {"mode":"single", "result":
+   analyze(x, meta, diff=diff).to_json()}`. **채널화 없이 직접 analyze** → UI가 받는 데이터가 현재
+   `/api/analyze`와 **동일**(fc도 정확). 밴드폭 임계값 대신 **에미터 개수** 기준 = 사용자 멘탈모델과
+   일치 + 임계값 취약성 제거. (트레이드오프: 넓은 캡처의 단독 극협대역 1개는 채널화 이득을 못 받지만,
+   이는 현재와 동일한 동작이므로 회귀 아님.)
 4. 그 외 → `sv = survey(x, meta, diff=diff)` 실행, 응답 조립:
    - `overview`: `{"fs": fs, "spectrum": spectrum(xa, fs), "waterfall": waterfall(xa, fs)}`.
    - `emitters`: 각 `Emitter`에 대해 `Emitter.to_detail()`(신규, §4.3) — det + 경량 상세.

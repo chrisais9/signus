@@ -155,3 +155,61 @@ def test_survey_reports_analog_emitter():
     s = survey(x, Meta(FS, "iq", "f32", "le", False))
     analog = [e for e in s.emitters if e.kind == "analog"]
     assert analog and all(e.result is None for e in analog)
+
+
+# --- survey_web (roadmap #6): web payload assembly ---------------------------
+
+def test_survey_web_single_signal_matches_analyze():
+    # <=1 detected emitter -> 'single' mode returns the UNCHANGED direct analyze result
+    from signus.pipeline import analyze, survey_web
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=8000, fs=FS, baud=1e5, fc=8e3,
+                              snr=22, seed=0))
+    meta = Meta(FS, "iq", "f32", "le", False)
+    web = survey_web(x, meta)
+    assert web["mode"] == "single"
+    assert web["result"] == analyze(x, meta).to_json()   # byte-identical: no regression
+
+
+def test_survey_web_multi_has_overview_and_emitter_details():
+    from signus.pipeline import survey_web
+    mix, _ = _mixture()
+    web = survey_web(mix, Meta(FS, "iq", "f32", "le", False))
+    assert web["mode"] == "survey"
+    assert {"spectrum", "waterfall", "fs"} <= set(web["overview"])
+    assert web["overview"]["waterfall"]["rows"] > 0
+    assert len(web["emitters"]) == 3
+    for e in web["emitters"]:                             # box geometry present for every box
+        assert {"kind", "abs_fc", "det"} <= set(e)
+        assert {"fc", "bw", "t0", "t1", "snr_db"} <= set(e["det"])
+    dig = [e for e in web["emitters"] if e["kind"] in ("linear", "fsk")]
+    assert dig and all("constellation" in e["result"] for e in dig)
+
+
+def test_server_survey_and_analyze_endpoints_smoke():
+    import http.client
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from signus.server import Handler
+    mix, _ = _mixture()
+    body = np.column_stack([mix.real, mix.imag]).ravel().astype("<f4").tobytes()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        qs = "?name=cap_fs1000000_iq_f32.dat"
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
+        c.request("POST", "/api/survey" + qs, body=body)
+        doc = json.loads(c.getresponse().read())
+        assert doc["mode"] == "survey" and len(doc["emitters"]) == 3
+        c.request("POST", "/api/analyze" + qs, body=body)     # refactor must not break this
+        r = c.getresponse()
+        doc = json.loads(r.read())
+        assert r.status == 200 and "detected" in doc and "constellation" in doc
+        c.request("POST", "/api/survey?name=bad.dat", body=b"\x00\x00")  # unknown meta -> 400
+        bad = c.getresponse()
+        bad.read()
+        assert bad.status == 400
+    finally:
+        srv.shutdown()
