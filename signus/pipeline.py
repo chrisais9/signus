@@ -308,7 +308,7 @@ def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
         return {"mode": "single", "result": analyze(x, meta, diff=diff).to_json()}
     sv = survey(x, meta, diff=diff)
     return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt,
-            "overview": {"fs": meta.fs, "spectrum": spectrum(xa, meta.fs),
+            "overview": {"fs": meta.fs, "n": int(xa.size), "spectrum": spectrum(xa, meta.fs),
                          "waterfall": waterfall(xa, meta.fs)},
             "emitters": [e.to_detail() for e in sv.emitters]}
 

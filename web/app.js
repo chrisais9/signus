@@ -1,9 +1,11 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const API = "/api/analyze";
+const SURVEY_API = "/api/survey";
 const FS_RE = /(?:^|_)fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
-const state = { file: null, sidecar: null, meta: null, resp: null, batch: [], burst: null };
+const state = { file: null, sidecar: null, meta: null, resp: null, batch: [],
+                burst: null, survey: null, drilled: false };
 
 /* --- filename parsing (mirror of sigio.parse_name; read-necessities only) --- */
 const DTYPES = ["i8", "u8", "i16", "u16", "f32", "f64"];
@@ -79,11 +81,13 @@ async function acceptFiles(list) {
   state.resp = null;
   state.batch = [];
   state.burst = null;
+  state.survey = null;
+  state.drilled = false;
   const sm = metas.find((m) => m.name.toLowerCase().endsWith(".sigmf-meta"));
   const truth = metas.find((m) => m.name.toLowerCase().endsWith(".json"));
   state.sidecar = truth ? await readJson(truth) : null;   // client-side only, never sent
   state.meta = (sm && metaFromSigmf(await readJson(sm))) || parseName(state.file.name);
-  if (state.meta && state.meta.fs && state.meta.fmt) analyze();
+  if (state.meta && state.meta.fs && state.meta.fmt) runSurvey();
   else showMetaForm();
 }
 const readJson = (f) => f.text().then(JSON.parse).catch(() => null);
@@ -100,7 +104,7 @@ $("metaGo").onclick = () => {
   const fs = parseFloat($("mFs").value), fmt = $("mFmt").value;
   if (!(fs > 0) || !fmt) return showError("샘플레이트와 포맷을 입력해주세요.");
   state.meta = { fs, fmt, dtype: $("mDtype").value, endian: "le", bitrev: false };
-  analyze();
+  runSurvey();
 };
 
 /* --- server call (contract-frozen) --- */
@@ -114,18 +118,31 @@ function query(file, m, burst) {
   if (burst != null) q.set("burst", burst);
   return q;
 }
-async function post(file, m, burst) {
-  const res = await fetch(API + "?" + query(file, m, burst), { method: "POST", body: file });
+async function postTo(api, file, m, burst) {
+  const res = await fetch(api + "?" + query(file, m, burst), { method: "POST", body: file });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || `서버 오류 (${res.status})`);
   return data;
 }
-async function analyze() {
+async function runSurvey() {                  // entry: one capture -> single detail OR survey
+  hideAll();
+  state.drilled = false;
+  $("loadMsg").textContent = "신호를 조사하고 있어요…";
+  show($("loading"));
+  try {
+    const resp = await postTo(SURVEY_API, state.file, state.meta);
+    if (resp.mode === "single") { state.survey = null; state.resp = resp.result; render(resp.result); }
+    else renderSurvey(resp);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+async function analyze() {                     // burst re-selection within a single signal
   hideAll();
   $("loadMsg").textContent = "신호를 분석하고 있어요…";
   show($("loading"));
   try {
-    state.resp = await post(state.file, state.meta, state.burst);
+    state.resp = await postTo(API, state.file, state.meta, state.burst);
     render(state.resp);
     $("backBatch").classList.toggle("hidden", !state.batch.length);
   } catch (e) {
@@ -146,7 +163,7 @@ async function runBatch(data, metas) {
     let resp = null, err = null;
     try {
       if (!meta.fs || !meta.fmt) throw new Error("파일명에 fs/포맷 정보가 없어요");
-      resp = await post(f, meta);
+      resp = await postTo(API, f, meta);
     } catch (e) { err = e.message; }
     const tf = truths.get(f.name);
     rows.push({ file: f, resp, err, sidecar: tf ? await readJson(tf) : null });
@@ -171,10 +188,13 @@ function renderBatch(rows) {
       const r = state.batch[+tr.dataset.i];
       if (!r.resp) return;
       state.file = r.file; state.resp = r.resp; state.sidecar = r.sidecar;
-      state.burst = null;
+      state.burst = null; state.drilled = false; state.survey = null;
       hideAll();
       render(r.resp);
-      $("backBatch").classList.remove("hidden");
+      const b = $("backBatch");
+      b.textContent = "← 목록으로";
+      b.onclick = () => { hideAll(); renderBatch(state.batch); };
+      b.classList.remove("hidden");
     };
   });
   show($("batchCard"));
@@ -189,6 +209,96 @@ $("dlCsv").onclick = () => {
   }).join("\n");
   saveBlob("signus_batch.csv", head + body, "text/csv");
 };
+
+/* --- wideband survey overview (waterfall + detected-emitter boxes) --- */
+function renderSurvey(resp) {
+  hideAll();
+  stopPlay();
+  state.survey = resp;
+  const dig = resp.emitters.filter((e) => e.result).length;
+  $("survCount").textContent = `${resp.emitters.length}개 신호 · 디지털 ${dig}`;
+  $("survInfo").classList.add("hidden");
+  renderSurveyList(resp);
+  show($("surveyCard"));                // show first so the canvas has a real width
+  paintWaterfall($("survFall"), resp.overview.waterfall, 230);
+  drawBoxes(resp);
+}
+
+function boxStyle(e) {   // -> [css class, short label]
+  if (e.result) {
+    const lock = Math.round(e.result.quality.lock);
+    return [lock >= 60 ? "ok" : lock >= 40 ? "warn" : "bad",
+            `${e.result.detected.mod.toUpperCase()} · ${lock}`];
+  }
+  return ["gray", { analog: "아날로그", tone: "톤/CW", tooshort: "짧음",
+                    error: "오류" }[e.kind] || e.kind];
+}
+
+function drawBoxes(resp) {
+  const host = $("survBoxes"), fs = resp.overview.fs, n = resp.overview.n || 1;
+  host.innerHTML = "";
+  resp.emitters.forEach((e) => {
+    const d = e.det, [cls, lbl] = boxStyle(e);
+    const wpct = Math.max(0.8, d.bw / fs * 100);          // width  = bandwidth / fs
+    const left = (d.fc + fs / 2) / fs * 100 - wpct / 2;   // x      = carrier on -fs/2..fs/2
+    const top = Math.max(0, d.t0 / n * 100);              // y      = burst start over capture
+    const b = document.createElement("button");
+    b.className = "box " + cls;
+    b.style.left = Math.max(0, Math.min(100 - wpct, left)) + "%";
+    b.style.width = wpct + "%";
+    b.style.top = top + "%";
+    b.style.height = Math.min(100 - top, Math.max(7, (d.t1 - d.t0) / n * 100)) + "%";
+    b.title = lbl;
+    b.innerHTML = `<span class="box-lbl">${lbl}</span>`;
+    b.onclick = () => drillEmitter(e);
+    host.appendChild(b);
+  });
+}
+
+function renderSurveyList(resp) {
+  const KIND = { linear: "디지털", fsk: "FSK", analog: "아날로그", tone: "톤/CW",
+                 tooshort: "짧음", error: "오류" };
+  $("survBody").innerHTML = resp.emitters.map((e, i) => {
+    const [cls] = boxStyle(e), r = e.result;
+    const lock = r ? `<span class="pill ${cls}">${Math.round(r.quality.lock)}</span>`
+                   : `<span class="pill gray">–</span>`;
+    return `<tr data-i="${i}"><td class="fc">${fmtHz(e.abs_fc)}</td>` +
+      `<td>${KIND[e.kind] || e.kind}</td><td>${r ? r.detected.mod.toUpperCase() : "–"}</td>` +
+      `<td>${r ? fmtHz(r.detected.baud) : "–"}</td><td>${lock}</td></tr>`;
+  }).join("");
+  $("survBody").querySelectorAll("tr").forEach((tr) => {
+    tr.onclick = () => drillEmitter(resp.emitters[+tr.dataset.i]);
+  });
+}
+
+function drillEmitter(e) {
+  if (e.result) {                       // digital -> reuse the single-signal detail view
+    state.drilled = true;
+    state.resp = e.result;
+    render(e.result);
+    $("fileName").textContent = `에미터 @ ${fmtHz(e.abs_fc)} · ${state.file.name}`;
+    const b = $("backBatch");
+    b.textContent = "← Survey로";
+    b.onclick = backToSurvey;
+    b.classList.remove("hidden");
+  } else {                              // non-digital -> inline info, stay on the overview
+    showSurveyInfo(e);
+  }
+}
+function backToSurvey() { state.drilled = false; renderSurvey(state.survey); }
+
+function showSurveyInfo(e) {
+  const d = e.det, KIND = { analog: "아날로그 (FM/음성)", tone: "톤 / CW",
+    tooshort: "너무 짧은 버스트", error: "분석 오류" };
+  const rows = [["중심주파수", fmtHz(e.abs_fc)], ["대역폭", fmtHz(d.bw)],
+    ["SNR", d.snr_db == null ? "–" : d.snr_db.toFixed(1) + " dB"],
+    ["심볼레이트(추정)", fmtHz(d.baud_hint)]];
+  $("survInfo").innerHTML = `<h3>${KIND[e.kind] || e.kind} — 복조 대상 아님</h3>` +
+    '<div class="si-grid">' + rows.map(([k, v]) =>
+      `<div><div class="si-k">${k}</div><div class="si-v">${v}</div></div>`).join("") + "</div>";
+  $("survInfo").classList.remove("hidden");
+  $("survInfo").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "nearest" });
+}
 
 /* --- rendering --- */
 function statusOf(lock) {
@@ -233,7 +343,9 @@ function snrText(d) {
 
 function renderBursts(d) {
   const row = $("burstRow"), bs = d.bursts || [];
-  if (bs.length < 2) { row.innerHTML = ""; return; }
+  // a survey-drilled emitter is already a cut channel: burst re-selection would
+  // re-post the whole capture, so it is disabled while drilled.
+  if (state.drilled || bs.length < 2) { row.innerHTML = ""; return; }
   const dur = (b) => {
     const sec = (b.end - b.start) / d.fs;
     return sec >= 1 ? sec.toFixed(2) + " s" : (sec * 1e3).toFixed(1) + " ms";
@@ -334,10 +446,10 @@ function drawSpectrum(d) {
 }
 
 /* --- waterfall --- */
-function drawWaterfall(d) {
-  const [g, w, h] = fit($("fallCanvas"), 150);
+function drawWaterfall(d) { paintWaterfall($("fallCanvas"), d.waterfall, 150); }
+function paintWaterfall(canvas, wf, hCss) {
+  const [g, w, h] = fit(canvas, hCss);
   g.fillStyle = "#0d1320"; g.fillRect(0, 0, w, h);
-  const wf = d.waterfall;
   if (!wf || !wf.rows) return;
   const lo = pct(wf.db, 0.05), hi = pct(wf.db, 0.95);
   const img = g.createImageData(wf.bins, wf.rows);
@@ -476,7 +588,8 @@ $("dlReport").onclick = () =>
 function show(el) { el.classList.remove("hidden"); }
 function hideAll() {
   stopPlay();
-  ["metaForm", "loading", "errorCard", "results", "batchCard"].forEach((id) => $(id).classList.add("hidden"));
+  ["metaForm", "loading", "errorCard", "results", "batchCard", "surveyCard"]
+    .forEach((id) => $(id).classList.add("hidden"));
   $("backBatch").classList.add("hidden");
 }
 function showError(msg) { hideAll(); $("errMsg").textContent = msg; show($("errorCard")); }
