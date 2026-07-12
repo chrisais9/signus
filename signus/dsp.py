@@ -7,6 +7,7 @@ import numpy as np
 from scipy.ndimage import uniform_filter1d
 from scipy.signal import hilbert, resample_poly, welch
 
+from ._accel import dd_carrier
 from .constellations import ideal_points
 
 
@@ -24,6 +25,28 @@ def _parab(ydb: np.ndarray, k: int) -> float:
     a, b, c = ydb[k - 1], ydb[k], ydb[k + 1]
     d = a - 2 * b + c
     return 0.5 * (a - c) / d if d != 0 else 0.0
+
+
+def _kmeans1d(a: np.ndarray, k: int, iters: int = 50) -> tuple[np.ndarray, np.ndarray, float]:
+    """1-D k-means on quantile-seeded centers; return (centers, labels, rms spread).
+    Assignment is a running min over the k centers (no (N, k) broadcast temporary);
+    strict `<` keeps the lowest-index center on ties, so labels are identical to a
+    broadcast argmin. Shared by the classify amplitude-ring test and the FSK level demod."""
+    c = np.quantile(a, (np.arange(k) + 0.5) / k)
+    lab = np.zeros(a.size, dtype=int)
+    for _ in range(iters):
+        d = np.abs(a - c[0])
+        lab = np.zeros(a.size, dtype=int)
+        for j in range(1, k):
+            dj = np.abs(a - c[j])
+            closer = dj < d
+            lab[closer] = j
+            d[closer] = dj[closer]
+        nc = np.array([a[lab == j].mean() if np.any(lab == j) else c[j] for j in range(k)])
+        if np.allclose(nc, c):
+            break
+        c = nc
+    return c, lab, float(np.sqrt(np.mean((a - c[lab]) ** 2)))
 
 
 # --- burst detection -------------------------------------------------------
@@ -248,18 +271,9 @@ def timing(x: np.ndarray, sps: int, block: int = 256, out: int = 1) -> np.ndarra
 
 def ddsync(symbols: np.ndarray, mod: str, alpha: float = 0.05, beta: float = 0.002) -> np.ndarray:
     """Decision-directed PI carrier loop, general across PSK/QAM (never a PSK-only
-    Costas loop, which jitters QAM at the correct points)."""
+    Costas loop, which jitters QAM at the correct points). Sequential feedback (each
+    phase update depends on the prior decision) -> numba kernel when available."""
     pts = ideal_points(mod)
     z = symbols / np.sqrt(np.mean(np.abs(symbols) ** 2))  # AGC to unit power
-    out = np.empty(z.size, dtype=np.complex128)
-    phase = freq = 0.0
-    # Sequential feedback: each phase update depends on the prior decision, so this
-    # per-symbol loop cannot be vectorized.
-    for i in range(z.size):
-        y = z[i] * np.exp(-1j * phase)
-        d = pts[np.argmin(np.abs(y - pts))]
-        e = np.angle(y * np.conj(d))
-        out[i] = y
-        phase += freq + alpha * e
-        freq += beta * e
-    return out
+    return dd_carrier(np.ascontiguousarray(z, dtype=np.complex128),
+                      np.ascontiguousarray(pts, dtype=np.complex128), alpha, beta)

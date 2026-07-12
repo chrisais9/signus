@@ -315,17 +315,22 @@ def _dataset(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_args(p: argparse.ArgumentParser) -> None:
+    """Read-side sample-format overrides, shared by analyze/survey (sidecar/filename win)."""
+    p.add_argument("--fs", type=float)
+    p.add_argument("--fmt", choices=("iq", "real"))
+    p.add_argument("--dtype", choices=_DTYPE_CHOICES)
+    p.add_argument("--be", action="store_true", help="big-endian 샘플")
+    p.add_argument("--bitrev", action="store_true", help="바이트 내 비트 역순")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="signus")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     a = sub.add_parser("analyze", help="블라인드 복조 + 제원 탐지")
     a.add_argument("file")
-    a.add_argument("--fs", type=float)
-    a.add_argument("--fmt", choices=("iq", "real"))
-    a.add_argument("--dtype", choices=_DTYPE_CHOICES)
-    a.add_argument("--be", action="store_true", help="big-endian 샘플")
-    a.add_argument("--bitrev", action="store_true", help="바이트 내 비트 역순")
+    _read_args(a)
     a.add_argument("--save-iq")
     a.add_argument("--save-symbols")
     a.add_argument("--save-bits")
@@ -337,11 +342,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sv = sub.add_parser("survey", help="광대역 캡처의 모든 신호 탐지 + 복조")
     sv.add_argument("file")
-    sv.add_argument("--fs", type=float)
-    sv.add_argument("--fmt", choices=("iq", "real"))
-    sv.add_argument("--dtype", choices=_DTYPE_CHOICES)
-    sv.add_argument("--be", action="store_true", help="big-endian 샘플")
-    sv.add_argument("--bitrev", action="store_true", help="바이트 내 비트 역순")
+    _read_args(sv)
     sv.add_argument("--diff", action="store_true", help="차동 디맵")
     sv.add_argument("--report", help="JSON 리포트 저장 경로")
 

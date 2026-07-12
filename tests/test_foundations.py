@@ -1,0 +1,163 @@
+"""Foundations: constellations / sigio (sample-type matrix) / gen (all mod families)."""
+
+import os
+
+import numpy as np
+import pytest
+
+from signus.constellations import (
+    DIFF_MODS,
+    DIFF_PHASES,
+    FSK_MODS,
+    GEN_MODS,
+    MODS,
+    bit_labels,
+    demap_bits,
+    demap_diff_bits,
+    family,
+    ideal_points,
+    mod_order,
+    to_bits,
+)
+from signus.gen import GenParams, generate, save
+from signus.sigio import Meta, decode, make_name, parse_name, read, sidecar_read, write
+
+
+@pytest.mark.parametrize("mod", MODS)
+def test_labels_are_permutation_and_demap_roundtrips(mod):
+    m = mod_order(mod)
+    assert sorted(bit_labels(mod)) == list(range(m))
+    idx = np.random.default_rng(0).integers(0, m, 500)
+    rx = demap_bits(ideal_points(mod)[idx], mod)
+    assert np.array_equal(rx, to_bits(bit_labels(mod)[idx], mod))
+
+
+@pytest.mark.parametrize("mod", MODS)
+def test_unit_power(mod):
+    assert abs(np.mean(np.abs(ideal_points(mod)) ** 2) - 1.0) < 1e-9
+
+
+def test_qam_gray_adjacency():
+    lb = bit_labels("16qam").reshape(4, 4)
+    for a, b in zip(lb[:-1].ravel(), lb[1:].ravel(), strict=True):
+        assert bin(int(a) ^ int(b)).count("1") == 1
+
+
+def test_parse_name_minimal_and_blind():
+    m = parse_name(make_name("cap", Meta(2_400_000, "iq", "f32"), "iq"))
+    assert (m.fs, m.fmt, m.dtype) == (2_400_000, "iq", "f32") and m.ok()
+    assert not parse_name("mystery.bin").ok()
+    # legacy truth tokens are ignored, not parsed
+    legacy = parse_name("sig_fs1000000_fc10000_baud9600_qpsk_snr20_real_i16.pcm")
+    assert (legacy.fs, legacy.fmt) == (1_000_000, "real")
+
+
+def test_parse_baudline_aliases_endian_bitrev():
+    m = parse_name("cap_fs1000000_iq_8o.iq")           # 8o = offset binary = u8
+    assert m.dtype == "u8"
+    assert parse_name("cap_fs1_iq_16t.iq").dtype == "i16"
+    assert parse_name("cap_fs1_iq_8t.iq").dtype == "i8"
+    m = parse_name("cap_fs1000000_iq_i16_be_bitrev.iq")
+    assert m.endian == "be" and m.bitrev
+    rt = parse_name(make_name("x", Meta(1e6, "iq", "u16", "be", True), "iq"))
+    assert (rt.dtype, rt.endian, rt.bitrev) == ("u16", "be", True)
+
+
+@pytest.mark.parametrize("dtype", ["i8", "u8", "i16", "u16", "f32", "f64"])
+@pytest.mark.parametrize("endian", ["le", "be"])
+@pytest.mark.parametrize("bitrev", [False, True])
+def test_sample_type_matrix_roundtrip(tmp_path, dtype, endian, bitrev):
+    """write -> read must preserve the waveform for every sample-type variant."""
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=300, snr=30, seed=5))
+    meta = Meta(1e6, "iq", dtype, endian, bitrev)
+    f = str(tmp_path / make_name("t", meta, "iq"))
+    write(f, x, meta)
+    y, _ = read(f)
+    m = min(x.size, y.size)
+    r = np.abs(np.vdot(y[:m], x[:m])) / (np.linalg.norm(y[:m]) * np.linalg.norm(x[:m]))
+    assert r > (0.98 if "8" in dtype else 0.999), (dtype, endian, bitrev, r)
+
+
+def test_decode_u8_offset_binary():
+    raw = np.array([128, 128, 255, 0], dtype=np.uint8).tobytes()  # (0,0), (~1,-1)
+    z = decode(raw, Meta(1e6, "iq", "u8"))
+    assert abs(z[0]) < 1e-9 and z[1].real > 0.9 and z[1].imag < -0.9
+
+
+def test_generate_reproducible_and_snr():
+    p = GenParams(mod="qpsk", n_symbols=3000, seed=7)
+    (a, ba), (b, bb) = generate(p), generate(p)
+    assert np.allclose(a, b) and np.array_equal(ba, bb)
+    clean, _ = generate(GenParams(mod="qpsk", n_symbols=3000, seed=7, snr=100))
+    noisy, _ = generate(GenParams(mod="qpsk", n_symbols=3000, seed=7, snr=10))
+    snr = 10 * np.log10(np.mean(np.abs(clean) ** 2) / np.mean(np.abs(noisy - clean) ** 2))
+    assert abs(snr - 10) < 1.5
+
+
+@pytest.mark.parametrize("kw", [{}, {"pad": 0.4}, {"drift_ppm": 80}, {"dc": 0.4 + 0.2j},
+                                {"fmt": "real", "fc": 90e3}])
+def test_generate_impairments_finite(kw):
+    x, bits = generate(GenParams(mod="8psk", n_symbols=400, seed=1, **kw))
+    assert np.isfinite(x).all() and len(bits) == 400 * 3
+    assert np.iscomplexobj(x) == (kw.get("fmt", "iq") == "iq")
+
+
+@pytest.mark.parametrize("mod", GEN_MODS)
+def test_all_gen_mods_produce_finite_signal(mod):
+    kw = {"fc": 0.0} if family(mod) == "fsk" else {"fc": 8000.0}
+    x, bits = generate(GenParams(mod=mod, n_symbols=400, seed=1, **kw))
+    k = mod_order(mod).bit_length() - 1
+    assert np.isfinite(x).all() and len(bits) == 400 * k
+
+
+@pytest.mark.parametrize("mod", DIFF_MODS)
+def test_diff_demap_loopback(mod):
+    """Transition bits survive a noiseless diff encode -> demap round trip
+    regardless of an arbitrary rotation (the whole point of differential)."""
+    rng = np.random.default_rng(3)
+    k = mod_order(mod).bit_length() - 1
+    idx = rng.integers(0, mod_order(mod), 500)
+    sym = np.exp(1j * (np.cumsum(DIFF_PHASES[mod][idx]) + 1.234))  # rotated!
+    rx = demap_diff_bits(sym, mod)
+    tx = to_bits(idx, mod)
+    assert np.array_equal(rx, tx[k:])  # first symbol's transition needs the seed phase
+
+
+@pytest.mark.parametrize("mod", FSK_MODS)
+def test_fsk_constant_envelope_and_index(mod):
+    p = GenParams(mod=mod, n_symbols=600, fs=8e5, baud=1e5, snr=90, h=0.7, seed=2)
+    x, _ = generate(p)
+    env = np.abs(x)
+    assert np.std(env) / np.mean(env) < 0.05  # CPFSK: constant envelope
+    f_inst = np.angle(x[1:] * np.conj(x[:1] and x[:-1])) * p.fs / (2 * np.pi)
+    h = 0.5 if mod == "msk" else 0.7
+    lv = np.sort(np.unique(np.round(f_inst / (h * p.baud / 2))))
+    span = mod_order(mod) - 1
+    assert lv.min() >= -span - 1 and lv.max() <= span + 1  # levels near +-(M-1)
+
+
+def test_multipath_taps_and_sidecar(tmp_path):
+    taps = (1, 0, 0.35 * np.exp(1j * 0.8))
+    p = GenParams(mod="qpsk", n_symbols=500, fc=8000.0, taps=taps, seed=1)
+    x, _ = generate(p)
+    assert np.isfinite(x).all()
+    path = save(p, str(tmp_path))
+    sc = sidecar_read(path)
+    assert len(sc["gen"]["taps"]) == 3 and abs(sc["gen"]["taps"][2][1] - 0.251) < 0.01
+
+
+def test_32qam_cross_geometry():
+    pts = ideal_points("32qam")
+    assert pts.size == 32
+    assert abs(np.mean(np.abs(pts) ** 2) - 1.0) < 1e-9
+    assert sorted(bit_labels("32qam")) == list(range(32))
+
+
+def test_save_writes_blind_name_and_sidecar(tmp_path):
+    path = save(GenParams(mod="16qam", fc=8000, n_symbols=500, seed=2), str(tmp_path))
+    name = os.path.basename(path)
+    assert "16qam" not in name and "8000" not in name.replace("fs", "")
+    x, meta = read(path)
+    assert np.iscomplexobj(x) and meta.fs == 1e6
+    sc = sidecar_read(path)
+    assert sc["truth"] == {"mod": "16qam", "fc": 8000, "baud": 1e5, "rolloff": 0.35, "snr": 20}
