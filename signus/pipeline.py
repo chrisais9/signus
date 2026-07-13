@@ -14,6 +14,7 @@ import numpy as np
 from . import classify as cl
 from . import dsp, triage
 from .channelize import extract
+from .chirp import analyze_chirp
 from .constellations import demap_bits, demap_diff_bits
 from .detect import Detection, detect
 from .eq import equalize, equalize_fse
@@ -237,9 +238,10 @@ def analyze_file(path: str, fs: float | None = None, fmt: str | None = None,
 @dataclass
 class Emitter:
     detection: Detection
-    kind: str                      # linear|fsk|analog|tone|tooshort|error
+    kind: str                      # linear|fsk|chirp|analog|tone|tooshort|error
     abs_fc: float                  # emitter carrier vs capture centre (Hz)
     result: Result | None = None   # demod result for digital kinds
+    info: dict | None = None       # characterization for non-digital kinds (e.g. chirp params)
 
     def to_json(self) -> dict:
         d = self.detection
@@ -247,6 +249,8 @@ class Emitter:
                "det": {"fc": round(d.fc, 3), "bw": round(d.bw, 3),
                        "t0": d.t0, "t1": d.t1, "snr_db": _r(d.snr_db),
                        "baud_hint": round(d.baud_hint, 1)}}
+        if self.info is not None:
+            doc["info"] = self.info
         if self.result is not None:
             r = self.result
             doc.update(mod=r.mod, baud=round(r.baud, 3), lock=round(r.lock, 1),
@@ -295,7 +299,8 @@ def survey(x: np.ndarray, meta: Meta, *, diff: bool = False, **detect_kw) -> Sur
             except Exception:
                 emitters.append(Emitter(d, "error", d.fc))
         else:
-            emitters.append(Emitter(d, kind, d.fc))
+            info = analyze_chirp(ch, fs_ch) if kind == "chirp" else None
+            emitters.append(Emitter(d, kind, d.fc, info=info))
     return Survey(meta, emitters)
 
 

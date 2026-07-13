@@ -5,6 +5,7 @@ always sit at CV>=0.25, while FSK/FM/CW are constant-envelope (CV<=0.05)."""
 
 import numpy as np
 
+from .chirp import is_chirp
 from .fsk import fsk_gate
 
 _CV_CE = 0.15      # constant-envelope ceiling: below it a non-FSK signal is analog/tone
@@ -25,10 +26,12 @@ def _carrier_par(x: np.ndarray, powers: tuple[int, ...] = (1, 2, 4, 8)) -> float
 
 
 def family(x: np.ndarray, fs: float) -> str:
-    """One of 'fsk' | 'linear' | 'analog' | 'tone'. 'linear'/'fsk' go to the demod;
-    'analog'/'tone' are reported as-is (never force-fit to a constellation)."""
+    """One of 'fsk' | 'chirp' | 'linear' | 'analog' | 'tone'. 'linear'/'fsk' go to the
+    demod; 'chirp'/'analog'/'tone' are reported as-is (never force-fit to a constellation)."""
     if fsk_gate(x, fs):
         return "fsk"
+    if is_chirp(x, fs):            # linear chirp / CSS (LoRa) -- constant-envelope, would
+        return "chirp"            # otherwise fall through to 'analog' (no M-power tone)
     a = np.abs(x)
     if a.std() / (a.mean() + 1e-12) < _CV_CE:            # constant envelope, not FSK
         return "tone" if _carrier_par(x) >= _TONE_PAR else "analog"

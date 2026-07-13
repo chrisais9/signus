@@ -243,6 +243,9 @@ function boxStyle(e) {   // -> [css class, short label]
     return [lock >= 60 ? "ok" : lock >= 40 ? "warn" : "bad",
             `${e.result.detected.mod.toUpperCase()} · ${lock}`];
   }
+  if (e.kind === "chirp") {
+    return ["gray", e.info && e.info.sf ? `LoRa SF${e.info.sf}` : "처프"];
+  }
   return ["gray", { analog: "아날로그", tone: "톤/CW", tooshort: "짧음",
                     error: "오류" }[e.kind] || e.kind];
 }
@@ -269,8 +272,8 @@ function drawBoxes(resp) {
 }
 
 function renderSurveyList(resp) {
-  const KIND = { linear: "디지털", fsk: "FSK", analog: "아날로그", tone: "톤/CW",
-                 tooshort: "짧음", error: "오류" };
+  const KIND = { linear: "디지털", fsk: "FSK", chirp: "처프/LoRa", analog: "아날로그",
+                 tone: "톤/CW", tooshort: "짧음", error: "오류" };
   const rf0 = resp.rf_center;                      // real RF = capture centre + abs_fc
   $("survBody").innerHTML = resp.emitters.map((e, i) => {
     const [cls] = boxStyle(e), r = e.result;
@@ -305,12 +308,27 @@ function drillEmitter(e) {
 function backToSurvey() { state.drilled = false; renderSurvey(state.survey); }
 
 function showSurveyInfo(e) {
-  const d = e.det, KIND = { analog: "아날로그 (FM/음성)", tone: "톤 / CW",
-    tooshort: "너무 짧은 버스트", error: "분석 오류" };
-  const rows = [["중심주파수", fmtHz(e.abs_fc)], ["대역폭", fmtHz(d.bw)],
-    ["SNR", d.snr_db == null ? "–" : d.snr_db.toFixed(1) + " dB"],
-    ["심볼레이트(추정)", fmtHz(d.baud_hint)]];
-  $("survInfo").innerHTML = `<h3>${KIND[e.kind] || e.kind} — 복조 대상 아님</h3>` +
+  const d = e.det;
+  let title, rows;
+  if (e.kind === "chirp" && e.info) {          // linear chirp / CSS (LoRa): characterized only
+    const c = e.info;
+    title = (c.sf ? `LoRa 계열 (SF${c.sf})` : "선형 처프 / CSS") + " — 복조 대상 아님";
+    // rate + direction are robust (coherent from the beat tone); bw/SF only when the
+    // channel is cleanly isolated enough to snap to a LoRa hypothesis.
+    rows = [["중심주파수", fmtHz(e.abs_fc)],
+            ["처프 방향", c.up ? "▲ 상승" : "▼ 하강"],
+            ["처프율", (c.mu / 1e9).toFixed(3) + " MHz/ms"]];
+    if (c.sf) rows.push(["대역폭", fmtHz(c.bw)], ["심볼레이트", fmtHz(c.rs)],
+                        ["심볼시간", (c.tsym * 1e3).toFixed(2) + " ms"]);
+  } else {
+    const KIND = { analog: "아날로그 (FM/음성)", tone: "톤 / CW",
+      tooshort: "너무 짧은 버스트", error: "분석 오류" };
+    title = (KIND[e.kind] || e.kind) + " — 복조 대상 아님";
+    rows = [["중심주파수", fmtHz(e.abs_fc)], ["대역폭", fmtHz(d.bw)],
+      ["SNR", d.snr_db == null ? "–" : d.snr_db.toFixed(1) + " dB"],
+      ["심볼레이트(추정)", fmtHz(d.baud_hint)]];
+  }
+  $("survInfo").innerHTML = `<h3>${title}</h3>` +
     '<div class="si-grid">' + rows.map(([k, v]) =>
       `<div><div class="si-k">${k}</div><div class="si-v">${v}</div></div>`).join("") + "</div>";
   $("survInfo").classList.remove("hidden");

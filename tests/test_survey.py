@@ -216,6 +216,53 @@ def test_survey_web_carries_rf_center():
     assert web["mode"] == "survey" and web["rf_center"] == 162e6
 
 
+# --- chirp / CSS (LoRa) detection (roadmap: chirp support) -------------------
+
+def _lora(sf, bw, nsym, fc, snr, seed, fs=FS, n=N):
+    """LoRa-like CSS test fixture: cyclically-shifted up-chirps + 8 base-chirp preamble.
+    Independent of the receiver detector (anti-shared-bug)."""
+    rng = np.random.default_rng(seed)
+    sps = int(round(fs * 2 ** sf / bw))
+    mu = bw * bw / 2 ** sf
+    syms = np.concatenate([np.zeros(8, int), rng.integers(0, 2 ** sf, nsym)])
+    parts = []
+    for s in syms:
+        f = -bw / 2 + s * bw / 2 ** sf + mu * np.arange(sps) / fs
+        f = ((f + bw / 2) % bw) - bw / 2
+        parts.append(np.exp(2j * np.pi * np.cumsum(f) / fs))
+    x = np.concatenate(parts)
+    x = x[:n] if x.size >= n else np.concatenate([x, np.zeros(n - x.size, complex)])
+    x = x * np.exp(2j * np.pi * fc * np.arange(x.size) / fs)
+    nv = 1 / 10 ** (snr / 10)
+    return x + np.sqrt(nv / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+
+
+def test_chirp_detector_flags_lora_not_others():
+    from signus.chirp import analyze_chirp, is_chirp
+    lo = _lora(9, 125e3, 40, 0.0, 25, 1, n=100000)
+    assert is_chirp(lo, FS)
+    info = analyze_chirp(lo, FS)
+    assert info["sf"] == 9 and info["up"]
+    assert info["rs"] == pytest.approx(125e3 / 2 ** 9, rel=0.15)
+    for mod in ("qpsk", "16qam", "64qam"):            # digital must NOT be flagged chirp
+        x, _ = generate(GenParams(mod=mod, n_symbols=6000, fs=FS, baud=1e5, snr=20, seed=0))
+        assert not is_chirp(x, FS)
+    rng = np.random.default_rng(5)
+    assert not is_chirp(np.sqrt(0.5) * (rng.standard_normal(60000)
+                                        + 1j * rng.standard_normal(60000)), FS)
+
+
+def test_survey_reports_lora_as_chirp():
+    # a LoRa emitter in a wide capture -> kind 'chirp', characterized, NEVER demodulated
+    lo = _lora(9, 125e3, 40, 2.2e5, 22, 2)
+    rng = np.random.default_rng(0)
+    x = lo + np.sqrt(0.02 / 2) * (rng.standard_normal(N) + 1j * rng.standard_normal(N))
+    s = survey(x, Meta(FS, "iq", "f32", "le", False))
+    chirps = [e for e in s.emitters if e.kind == "chirp"]
+    assert chirps and all(e.result is None and e.info is not None for e in chirps)
+    assert chirps[0].info["sf"] == 9
+
+
 def test_server_survey_and_analyze_endpoints_smoke():
     import http.client
     import json
