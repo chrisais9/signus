@@ -6,7 +6,7 @@ const FS_RE = /(?:^|_)fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
 const RF_RE = /(?:^|_)rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const state = { file: null, sidecar: null, meta: null, resp: null, batch: [],
-                burst: null, survey: null, drilled: false };
+                burst: null, survey: null, drilled: false, overview: null };
 
 /* --- filename parsing (mirror of sigio.parse_name; read-necessities only) --- */
 const DTYPES = ["i8", "u8", "i16", "u16", "f32", "f64"];
@@ -90,6 +90,7 @@ async function acceptFiles(list) {
   state.burst = null;
   state.survey = null;
   state.drilled = false;
+  state.overview = null;
   const sm = metas.find((m) => m.name.toLowerCase().endsWith(".sigmf-meta"));
   const truth = metas.find((m) => m.name.toLowerCase().endsWith(".json"));
   state.sidecar = truth ? await readJson(truth) : null;   // client-side only, never sent
@@ -139,8 +140,11 @@ async function runSurvey() {                  // entry: one capture -> single de
   show($("loading"));
   try {
     const resp = await postTo(SURVEY_API, state.file, state.meta);
-    if (resp.mode === "single") { state.survey = null; state.resp = resp.result; render(resp.result); }
-    else renderSurvey(resp);
+    if (resp.mode === "single") {
+      state.survey = null; state.overview = resp.overview || null; state.resp = resp.result;
+      render(resp.result);
+      if (state.overview) renderBurstMap(state.overview, resp.result);
+    } else renderSurvey(resp);
   } catch (e) {
     showError(e.message);
   }
@@ -152,6 +156,7 @@ async function analyze() {                     // burst re-selection within a si
   try {
     state.resp = await postTo(API, state.file, state.meta, state.burst);
     render(state.resp);
+    if (state.overview) renderBurstMap(state.overview, state.resp);
     $("backBatch").classList.toggle("hidden", !state.batch.length);
   } catch (e) {
     showError(e.message);
@@ -196,7 +201,7 @@ function renderBatch(rows) {
       const r = state.batch[+tr.dataset.i];
       if (!r.resp) return;
       state.file = r.file; state.resp = r.resp; state.sidecar = r.sidecar;
-      state.burst = null; state.drilled = false; state.survey = null;
+      state.burst = null; state.drilled = false; state.survey = null; state.overview = null;
       hideAll();
       render(r.resp);
       const b = $("backBatch");
@@ -283,6 +288,7 @@ function renderSurveyList(resp) {
 function drillEmitter(e) {
   if (e.result) {                       // digital -> reuse the single-signal detail view
     state.drilled = true;
+    state.overview = null;              // a cut channel has no whole-capture burst map
     state.resp = e.result;
     render(e.result);
     const rf0 = state.survey && state.survey.rf_center;
@@ -311,6 +317,27 @@ function showSurveyInfo(e) {
   $("survInfo").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "nearest" });
 }
 
+/* --- burst map: whole-record waterfall with clickable time-burst boxes (single signal) --- */
+function renderBurstMap(ov, result) {
+  show($("burstMap"));
+  paintWaterfall($("burstFall"), ov.waterfall, 150);
+  const host = $("burstBoxes"), n = ov.n || 1;
+  host.innerHTML = "";
+  (result.bursts || []).forEach((b, i) => {
+    const top = Math.max(0, b.start / n * 100);
+    const dur = (b.end - b.start) / ov.fs;
+    const lbl = `버스트 ${i + 1} · ${dur >= 1 ? dur.toFixed(2) + " s" : (dur * 1e3).toFixed(0) + " ms"}`;
+    const box = document.createElement("button");   // full width (one signal), spans t0..t1 in time
+    box.className = "box" + (i === result.burst_idx ? " sel" : "");
+    box.style.left = "0%"; box.style.width = "100%"; box.style.top = top + "%";
+    box.style.height = Math.min(100 - top, Math.max(5, (b.end - b.start) / n * 100)) + "%";
+    box.title = lbl;
+    box.innerHTML = `<span class="box-lbl">${lbl}</span>`;
+    box.onclick = () => { state.burst = i; analyze(); };   // re-analyse that burst; map persists
+    host.appendChild(box);
+  });
+}
+
 /* --- rendering --- */
 function statusOf(lock) {
   if (lock >= 60) return ["복조 성공", "ok"];
@@ -320,6 +347,7 @@ function statusOf(lock) {
 function render(d) {
   hideAll();
   show($("results"));
+  $("burstMap").classList.add("hidden");   // re-shown by renderBurstMap only in multi-burst single mode
   const lock = d.quality.lock, [txt, cls] = statusOf(lock);
   const pill = $("statusPill");
   pill.textContent = txt;
@@ -355,8 +383,9 @@ function snrText(d) {
 function renderBursts(d) {
   const row = $("burstRow"), bs = d.bursts || [];
   // a survey-drilled emitter is already a cut channel: burst re-selection would
-  // re-post the whole capture, so it is disabled while drilled.
-  if (state.drilled || bs.length < 2) { row.innerHTML = ""; return; }
+  // re-post the whole capture, so it is disabled while drilled. When the burst MAP
+  // is shown (multi-burst single signal) the map replaces the chips.
+  if (state.drilled || state.overview || bs.length < 2) { row.innerHTML = ""; return; }
   const dur = (b) => {
     const sec = (b.end - b.start) / d.fs;
     return sec >= 1 ? sec.toFixed(2) + " s" : (sec * 1e3).toFixed(1) + " ms";

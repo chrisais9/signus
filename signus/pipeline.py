@@ -308,7 +308,12 @@ def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
     xa = dsp.analytic(x)
     xa = xa - xa.mean()
     if len(detect(xa, meta.fs)) <= 1:
-        return {"mode": "single", "result": analyze(x, meta, diff=diff).to_json()}
+        r = analyze(x, meta, diff=diff)
+        out = {"mode": "single", "result": r.to_json()}
+        if len(r.bursts) > 1:   # multi-burst signal -> whole-record map for burst selection
+            out["overview"] = {"n": int(xa.size), "fs": meta.fs,
+                               "waterfall": waterfall(xa, meta.fs)}
+        return out
     sv = survey(x, meta, diff=diff)
     return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt, "rf_center": meta.rf_center,
             "overview": {"fs": meta.fs, "n": int(xa.size), "spectrum": spectrum(xa, meta.fs),

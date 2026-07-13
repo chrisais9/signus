@@ -191,11 +191,13 @@ table.batch .fn { font-weight: 600; max-width: 210px; overflow: hidden;
 .box:hover, .box:focus-visible {
   background: rgba(49, 130, 246, .24); box-shadow: 0 0 0 2px rgba(255, 255, 255, .55); outline: none;
 }
-.box-lbl {
+.box-lbl {   /* hidden by default (a spectrogram full of labels is unreadable); shown on hover */
   position: absolute; top: -17px; left: -2px; white-space: nowrap; font-size: 10px;
   font-weight: 700; color: #fff; background: rgba(13, 19, 32, .85); padding: 1px 6px;
-  border-radius: 6px; pointer-events: none;
+  border-radius: 6px; pointer-events: none; display: none; z-index: 2;
 }
+.box:hover .box-lbl, .box:focus-visible .box-lbl, .box.sel .box-lbl { display: block; }
+.box.sel { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--blue); }
 .box.ok { border-color: var(--green); background: rgba(18, 184, 134, .13); }
 .box.ok .box-lbl { background: var(--green); }
 .box.warn { border-color: var(--amber); background: rgba(245, 159, 0, .13); }
