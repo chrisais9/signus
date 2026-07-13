@@ -185,6 +185,37 @@ def test_survey_web_multi_has_overview_and_emitter_details():
     assert dig and all("constellation" in e["result"] for e in dig)
 
 
+# --- RF absolute centre frequency (roadmap #7) -------------------------------
+
+def test_rf_center_parsed_from_filename_and_sigmf(tmp_path):
+    import json
+
+    from signus.sigio import parse_name, parse_sigmf
+    assert parse_name("cap_fs20e6_rf162e6_iq_i16.dat").rf_center == 162e6
+    assert parse_name("cap_fs1000000_iq_f32.dat").rf_center is None      # absent -> None
+    (tmp_path / "s.sigmf-meta").write_text(json.dumps({
+        "global": {"core:datatype": "cf32_le", "core:sample_rate": 1e6},
+        "captures": [{"core:sample_start": 0, "core:frequency": 161.975e6}]}))
+    assert parse_sigmf(str(tmp_path / "s.sigmf-data")).rf_center == 161.975e6
+
+
+def test_rf_reported_as_real_frequency_else_unchanged():
+    from signus.pipeline import analyze
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=8000, fs=FS, baud=1e5, fc=8e3, snr=22, seed=0))
+    d0 = analyze(x, Meta(FS, "iq", "f32", "le", False)).to_json()["detected"]
+    d1 = analyze(x, Meta(FS, "iq", "f32", "le", False, rf_center=162e6)).to_json()["detected"]
+    assert d0["rf_hz"] is None                                  # no rf -> unchanged
+    assert d1["rf_hz"] == pytest.approx(162e6 + d1["fc"], abs=1)  # rf -> real frequency
+    assert d0["fc"] == d1["fc"]                                 # baseband fc identical (no regress)
+
+
+def test_survey_web_carries_rf_center():
+    from signus.pipeline import survey_web
+    mix, _ = _mixture()
+    web = survey_web(mix, Meta(FS, "iq", "f32", "le", False, rf_center=162e6))
+    assert web["mode"] == "survey" and web["rf_center"] == 162e6
+
+
 def test_server_survey_and_analyze_endpoints_smoke():
     import http.client
     import json
@@ -200,9 +231,10 @@ def test_server_survey_and_analyze_endpoints_smoke():
     try:
         qs = "?name=cap_fs1000000_iq_f32.dat"
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=60)
-        c.request("POST", "/api/survey" + qs, body=body)
+        c.request("POST", "/api/survey" + qs + "&rf=161975000", body=body)
         doc = json.loads(c.getresponse().read())
         assert doc["mode"] == "survey" and len(doc["emitters"]) == 3
+        assert doc["rf_center"] == 161975000.0        # ?rf= query -> real RF plumbed through
         c.request("POST", "/api/analyze" + qs, body=body)     # refactor must not break this
         r = c.getresponse()
         doc = json.loads(r.read())

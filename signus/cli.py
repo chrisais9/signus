@@ -202,13 +202,15 @@ def _sweep(args: argparse.Namespace) -> int:
 def _analyze(args: argparse.Namespace) -> int:
     r = analyze_file(args.file, args.fs, args.fmt, args.dtype,
                      "be" if args.be else None, args.bitrev or None, args.diff,
-                     None if args.burst is None else args.burst - 1)
+                     None if args.burst is None else args.burst - 1, rf=args.rf)
     d = r.to_json()["detected"]
     truth = (sidecar_read(args.file) or {}).get("truth")  # display only, never detection
     if len(r.bursts) > 1:
         print(f"버스트 {len(r.bursts)}개 감지 — {r.burst_idx + 1}번째 분석 (--burst N 으로 선택)")
     print(f"모드      {d['mod']}" + (f"   (정답 {truth['mod']})" if truth else ""))
     print(f"반송파    {d['fc']:.1f} Hz" + (f"   (정답 {truth['fc']:.1f})" if truth else ""))
+    if d["rf_hz"] is not None:
+        print(f"실제 RF   {d['rf_hz'] / 1e6:.6f} MHz")
     print(f"심볼레이트 {d['baud']:.1f} Hz" + (f"   (정답 {truth['baud']:.1f})" if truth else ""))
     fsk = r.family == "fsk"
     tail = f"변조지수 h {d['h']:.2f}" if fsk else f"롤오프    {d['rolloff']:.2f}"
@@ -246,10 +248,12 @@ def _fhz(v: float) -> str:
 def _survey(args: argparse.Namespace) -> int:
     """Wideband survey: detect every emitter, demodulate the digital ones."""
     s = survey_file(args.file, args.fs, args.fmt, args.dtype,
-                    "be" if args.be else None, args.bitrev or None, args.diff)
-    print(f"{len(s.emitters)}개 신호 감지 (샘플레이트 {s.meta.fs:.0f} Hz)")
-    print(f"{'#':>2} {'중심주파수':>12} {'대역폭':>10} {'분류':>7} {'변조':>7}"
-          f" {'심볼레이트':>11} {'lock':>5}")
+                    "be" if args.be else None, args.bitrev or None, args.diff, rf=args.rf)
+    rf0 = s.meta.rf_center
+    note = f" · RF 중심 {rf0 / 1e6:.3f} MHz" if rf0 is not None else ""
+    print(f"{len(s.emitters)}개 신호 감지 (샘플레이트 {s.meta.fs:.0f} Hz{note})")
+    print(f"{'#':>2} {('실제 RF' if rf0 is not None else '중심주파수'):>12} {'대역폭':>10}"
+          f" {'분류':>7} {'변조':>7} {'심볼레이트':>11} {'lock':>5}")
     for i, e in enumerate(s.emitters):
         r = e.result
         mod = r.mod if r else "—"
@@ -257,7 +261,8 @@ def _survey(args: argparse.Namespace) -> int:
         lock = f"{r.lock:.0f}" if r else "—"
         kind = {"linear": "디지털", "fsk": "FSK", "analog": "아날로그",
                 "tone": "순수톤", "tooshort": "너무짧음", "error": "오류"}.get(e.kind, e.kind)
-        print(f"{i:>2} {_fhz(e.abs_fc):>12} {_fhz(e.detection.bw):>10} {kind:>7}"
+        fc = e.abs_fc if rf0 is None else rf0 + e.abs_fc
+        print(f"{i:>2} {_fhz(fc):>12} {_fhz(e.detection.bw):>10} {kind:>7}"
               f" {mod:>7} {baud:>11} {lock:>5}")
     if args.report:
         import json
@@ -322,6 +327,7 @@ def _read_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--dtype", choices=_DTYPE_CHOICES)
     p.add_argument("--be", action="store_true", help="big-endian 샘플")
     p.add_argument("--bitrev", action="store_true", help="바이트 내 비트 역순")
+    p.add_argument("--rf", type=float, help="RF 중심주파수 (Hz) — 실제 주파수로 보고")
 
 
 def main(argv: list[str] | None = None) -> int:

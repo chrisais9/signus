@@ -68,11 +68,13 @@ class Result:
                "alias_resolved": self.alias_resolved,
                "baud_fallback": self.baud_fallback}
         det["rolloff"] = None if self.rolloff is None else round(self.rolloff, 3)
+        rf = self.meta.rf_center                      # real RF = capture centre + baseband fc
+        det["rf_hz"] = None if rf is None else round(rf + self.fc, 3)
         if self.h is not None:
             det["h"] = round(self.h, 3)
         doc = {
-            "fs": self.meta.fs, "fmt": self.meta.fmt, "family": self.family,
-            "n_samples": int(self.iq_corr.size),
+            "fs": self.meta.fs, "fmt": self.meta.fmt, "rf_center": self.meta.rf_center,
+            "family": self.family, "n_samples": int(self.iq_corr.size),
             "burst": {"start": self.burst[0], "end": self.burst[1]},
             "bursts": [{"start": s, "end": e} for s, e in self.bursts],
             "burst_idx": self.burst_idx,
@@ -219,12 +221,13 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
 def analyze_file(path: str, fs: float | None = None, fmt: str | None = None,
                  dtype: str | None = None, endian: str | None = None,
                  bitrev: bool | None = None, diff: bool = False,
-                 burst: int | None = None) -> Result:
+                 burst: int | None = None, rf: float | None = None) -> Result:
     """Analyze a file; explicit args override SigMF/filename tokens."""
     from .sigio import parse_sigmf
     m = parse_sigmf(path) or parse_name(path)
     meta = Meta(fs or m.fs, fmt or m.fmt, dtype or m.dtype,
-                endian or m.endian, m.bitrev if bitrev is None else bitrev)
+                endian or m.endian, m.bitrev if bitrev is None else bitrev,
+                rf_center=rf if rf is not None else m.rf_center)
     x, meta = read(path, meta)
     return analyze(x, meta, diff, burst)
 
@@ -307,7 +310,7 @@ def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
     if len(detect(xa, meta.fs)) <= 1:
         return {"mode": "single", "result": analyze(x, meta, diff=diff).to_json()}
     sv = survey(x, meta, diff=diff)
-    return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt,
+    return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt, "rf_center": meta.rf_center,
             "overview": {"fs": meta.fs, "n": int(xa.size), "spectrum": spectrum(xa, meta.fs),
                          "waterfall": waterfall(xa, meta.fs)},
             "emitters": [e.to_detail() for e in sv.emitters]}
@@ -315,11 +318,13 @@ def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
 
 def survey_file(path: str, fs: float | None = None, fmt: str | None = None,
                 dtype: str | None = None, endian: str | None = None,
-                bitrev: bool | None = None, diff: bool = False) -> Survey:
+                bitrev: bool | None = None, diff: bool = False,
+                rf: float | None = None) -> Survey:
     """Survey a capture file; explicit args override SigMF/filename tokens."""
     from .sigio import parse_sigmf
     m = parse_sigmf(path) or parse_name(path)
     meta = Meta(fs or m.fs, fmt or m.fmt, dtype or m.dtype,
-                endian or m.endian, m.bitrev if bitrev is None else bitrev)
+                endian or m.endian, m.bitrev if bitrev is None else bitrev,
+                rf_center=rf if rf is not None else m.rf_center)
     x, meta = read(path, meta)
     return survey(x, meta, diff=diff)

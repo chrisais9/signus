@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 
 _FS_TOK = re.compile(r"(?:^|_)fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)", re.I)
+_RF_TOK = re.compile(r"(?:^|_)rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)", re.I)
 
 # token -> (numpy code, full-scale divisor, offset). u-types are offset binary
 # (e.g. 8o / RTL-SDR u8: 0..255 with 128 = zero).
@@ -34,6 +35,7 @@ class Meta:
     dtype: str = "i16"          # key of _DTYPES
     endian: str = "le"          # 'le' | 'be' (floats included)
     bitrev: bool = False        # bit order reversed within each byte
+    rf_center: float | None = None  # RF centre freq (Hz); None = unknown (report baseband)
 
     def ok(self) -> bool:
         return self.fs is not None and self.fmt in ("iq", "real") and self.dtype in _DTYPES
@@ -45,6 +47,8 @@ def parse_name(name: str) -> Meta:
     m = Meta()
     if mt := _FS_TOK.search(stem):
         m.fs = float(mt.group(1))
+    if rt := _RF_TOK.search(stem):
+        m.rf_center = float(rt.group(1))
     toks = stem.split("_")
     m.fmt = next((t for t in toks if t in ("iq", "real")), None)
     m.dtype = next((_ALIAS.get(t, t) for t in toks if t in _DTYPES or t in _ALIAS), "i16")
@@ -57,11 +61,15 @@ def parse_sigmf(path: str) -> Meta | None:
     """Read `<stem>.sigmf-meta` (core:sample_rate + core:datatype) if present."""
     try:
         with open(os.path.splitext(path)[0] + ".sigmf-meta") as fh:
-            g = json.load(fh)["global"]
+            doc = json.load(fh)
+        g = doc["global"]
         code = g["core:datatype"].replace("_le", "").replace("_be", "")
         dtype, fmt = _SIGMF[code]
         endian = "be" if g["core:datatype"].endswith("_be") else "le"
-        return Meta(float(g["core:sample_rate"]), fmt, dtype, endian)
+        caps = doc.get("captures") or []
+        rf = caps[0].get("core:frequency") if caps else None
+        return Meta(float(g["core:sample_rate"]), fmt, dtype, endian,
+                    rf_center=None if rf is None else float(rf))
     except (OSError, KeyError, ValueError):
         return None
 

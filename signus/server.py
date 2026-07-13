@@ -34,7 +34,8 @@ class Handler(BaseHTTPRequestHandler):
         meta = Meta(float(q["fs"][0]) if "fs" in q else m.fs,
                     q.get("fmt", [m.fmt])[0], q.get("dtype", [m.dtype])[0],
                     q.get("endian", [m.endian])[0],
-                    q.get("bitrev", ["1" if m.bitrev else "0"])[0] == "1")
+                    q.get("bitrev", ["1" if m.bitrev else "0"])[0] == "1",
+                    rf_center=float(q["rf"][0]) if "rf" in q else m.rf_center)
         if not meta.ok():
             raise ValueError(f"샘플레이트/포맷을 알 수 없습니다: {name}")
         return meta

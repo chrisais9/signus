@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const API = "/api/analyze";
 const SURVEY_API = "/api/survey";
 const FS_RE = /(?:^|_)fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
+const RF_RE = /(?:^|_)rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const state = { file: null, sidecar: null, meta: null, resp: null, batch: [],
                 burst: null, survey: null, drilled: false };
@@ -13,7 +14,7 @@ const DTYPES = ["i8", "u8", "i16", "u16", "f32", "f64"];
 const DTYPE_ALIAS = { "8t": "i8", "8o": "u8", "16t": "i16", "16o": "u16", "32f": "f32", "64f": "f64" };
 function parseName(name) {
   const stem = name.replace(/^.*\//, "").replace(/\.[^.]*$/, "").toLowerCase();
-  const mt = FS_RE.exec(stem), toks = stem.split("_");
+  const mt = FS_RE.exec(stem), rt = RF_RE.exec(stem), toks = stem.split("_");
   const dt = toks.find((t) => DTYPES.includes(t) || t in DTYPE_ALIAS);
   return {
     fs: mt ? parseFloat(mt[1]) : null,
@@ -21,6 +22,7 @@ function parseName(name) {
     dtype: dt ? (DTYPE_ALIAS[dt] || dt) : "i16",
     endian: toks.includes("be") ? "be" : "le",
     bitrev: toks.includes("bitrev"),
+    rf: rt ? parseFloat(rt[1]) : null,
   };
 }
 /* SigMF: core:datatype -> our fmt/dtype/endian */
@@ -32,8 +34,10 @@ function metaFromSigmf(doc) {
   const dt = g["core:datatype"], base = dt.replace(/_[lb]e$/, "");
   if (!(base in SIGMF)) return null;
   const [fmt, dtype] = SIGMF[base];
+  const cap = (doc.captures || [])[0] || {};
   return { fs: Number(g["core:sample_rate"]), fmt, dtype,
-           endian: dt.endsWith("_be") ? "be" : "le", bitrev: false };
+           endian: dt.endsWith("_be") ? "be" : "le", bitrev: false,
+           rf: cap["core:frequency"] != null ? Number(cap["core:frequency"]) : null };
 }
 
 /* --- number formatting --- */
@@ -47,6 +51,9 @@ function fmtHz(v) {
   if (a >= 1e6) return sig(v / 1e6) + " MHz";
   if (a >= 1e3) return sig(v / 1e3) + " kHz";
   return sig(v) + " Hz";
+}
+function fmtRf(v) {   // absolute RF: keep kHz resolution even in the 100s-of-MHz range
+  return (v / 1e6).toFixed(3) + " MHz";
 }
 
 /* --- ideal constellation points (mirror of constellations.ideal_points) --- */
@@ -115,6 +122,7 @@ function query(file, m, burst) {
   if (m.dtype) q.set("dtype", m.dtype);
   if (m.endian) q.set("endian", m.endian);
   if (m.bitrev) q.set("bitrev", "1");
+  if (m.rf != null) q.set("rf", m.rf);
   if (burst != null) q.set("burst", burst);
   return q;
 }
@@ -258,11 +266,12 @@ function drawBoxes(resp) {
 function renderSurveyList(resp) {
   const KIND = { linear: "디지털", fsk: "FSK", analog: "아날로그", tone: "톤/CW",
                  tooshort: "짧음", error: "오류" };
+  const rf0 = resp.rf_center;                      // real RF = capture centre + abs_fc
   $("survBody").innerHTML = resp.emitters.map((e, i) => {
     const [cls] = boxStyle(e), r = e.result;
     const lock = r ? `<span class="pill ${cls}">${Math.round(r.quality.lock)}</span>`
                    : `<span class="pill gray">–</span>`;
-    return `<tr data-i="${i}"><td class="fc">${fmtHz(e.abs_fc)}</td>` +
+    return `<tr data-i="${i}"><td class="fc">${rf0 != null ? fmtRf(rf0 + e.abs_fc) : fmtHz(e.abs_fc)}</td>` +
       `<td>${KIND[e.kind] || e.kind}</td><td>${r ? r.detected.mod.toUpperCase() : "–"}</td>` +
       `<td>${r ? fmtHz(r.detected.baud) : "–"}</td><td>${lock}</td></tr>`;
   }).join("");
@@ -276,7 +285,9 @@ function drillEmitter(e) {
     state.drilled = true;
     state.resp = e.result;
     render(e.result);
-    $("fileName").textContent = `에미터 @ ${fmtHz(e.abs_fc)} · ${state.file.name}`;
+    const rf0 = state.survey && state.survey.rf_center;
+    $("fileName").textContent =
+      `에미터 @ ${rf0 != null ? fmtRf(rf0 + e.abs_fc) : fmtHz(e.abs_fc)} · ${state.file.name}`;
     const b = $("backBatch");
     b.textContent = "← Survey로";
     b.onclick = backToSurvey;
@@ -365,7 +376,9 @@ function renderParams(d) {
   const det = d.detected, t = state.sidecar && state.sidecar.truth;
   const near = (a, b, tol) => Math.abs(a - b) <= tol;
   const rows = [
-    ["중심주파수", fmtHz(det.fc), t && t.fc != null && chip(near(det.fc, t.fc, Math.max(300, 0.02 * t.baud)), fmtHz(t.fc)), ""],
+    ["중심주파수", det.rf_hz != null ? fmtRf(det.rf_hz) : fmtHz(det.fc),
+      t && t.fc != null && chip(near(det.fc, t.fc, Math.max(300, 0.02 * t.baud)), fmtHz(t.fc)),
+      det.rf_hz != null ? `기저대역 ${fmtHz(det.fc)}` : ""],
     ["심볼레이트", fmtHz(det.baud), t && t.baud != null && chip(near(det.baud, t.baud, 0.03 * t.baud), fmtHz(t.baud)),
       det.baud_conf ? `스펙트럴 라인 강도 ×${Math.round(det.baud_conf)}` : ""],
     ["변조방식", det.mod.toUpperCase(), t && t.mod != null && chip(det.mod === t.mod, t.mod.toUpperCase()),
