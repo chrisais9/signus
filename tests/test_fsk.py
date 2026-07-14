@@ -114,3 +114,15 @@ def test_fsk_gate_rejects_high_baud_psk_keeps_real_fsk():
         # worst FSK corner (snr10, high baud) must still gate True
         x, _ = generate(GenParams(mod=mod, fs=1e6, baud=2e5, snr=10, h=h, seed=0))
         assert fsk_gate(x, 1e6), f"{mod} FSK no longer detected"
+
+
+@pytest.mark.parametrize("mod,nsym,seed", [("fsk2", 12, 2), ("fsk2", 12, 3),
+                                           ("fsk4", 16, 1), ("msk", 18, 0)])
+def test_short_fsk_burst_rejects_cleanly_not_crash(mod, nsym, seed):
+    # a too-short FSK burst has no baud line / too few symbols to cluster levels; analyze_fsk
+    # must raise a clean ValueError, not an IndexError (empty np.quantile) or ZeroDivisionError.
+    from signus.pipeline import analyze
+    from signus.sigio import Meta
+    x, _ = generate(GenParams(mod=mod, fs=1e6, baud=1e5, fc=8e3, snr=18, n_symbols=nsym, seed=seed))
+    with pytest.raises(ValueError):
+        analyze(x, Meta(1e6, "iq", "f32", "le"))

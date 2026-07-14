@@ -14,6 +14,7 @@ _CV_MAX = 0.24    # envelope coeff-of-variation ceiling. Recalibrated on a broad
 # (false FSK). 0.24 sits in the 0.026 gap -> keeps every real FSK, rejects the PSK misfires.
 _SEP_MIN = 3.1    # instantaneous-freq 2-means separation floor (FSK>=3.39, rest<=2.85)
 _K4_RATIO = 2.6   # sp(k=2)/sp(k=4) collapse above which 4 levels beat 2
+_MIN_SYMS = 8     # fewer symbols than this cannot cluster 2/4 levels (empty-quantile crash)
 
 
 def _dcblock(x: np.ndarray) -> np.ndarray:
@@ -78,11 +79,15 @@ def analyze_fsk(x: np.ndarray, fs: float) -> dict:
     x = _dcblock(x)
     f = _ifreq(x, fs)
     baud = _est_baud(f, fs)
+    if baud <= 0:                       # a too-short / degenerate burst -> no baud line
+        raise ValueError("FSK 버스트에서 심볼율을 추정할 수 없습니다 (너무 짧음)")
     sps = fs / baud
     f = uniform_filter1d(f, max(1, int(round(sps / 2))))
     fc = float(f.mean())
     fcen = f - fc
     nsym = int(fcen.size / sps) - 1
+    if nsym < _MIN_SYMS:                # too few symbols to cluster levels / empty quantile
+        raise ValueError(f"FSK 버스트가 너무 짧습니다 ({nsym} 심볼)")
     ctr = (np.arange(nsym) + 0.5) * sps
 
     # symbol sampling phase: the offset whose sampled levels separate best
