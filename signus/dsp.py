@@ -137,18 +137,18 @@ def est_carrier(
 
 
 def resolve_alias(x: np.ndarray, fs: float, fc: float, sym: int) -> float:
-    """The M-th-power tone wraps mod fs, so fc is only known mod fs/sym. Pick the
-    candidate nearest the noise-subtracted spectral centroid (calibrated 291/291:
-    never moves a correct estimate at sweep SNRs, fixes wraps the 0.4*fs flag misses)."""
+    """The M-th-power tone wraps mod fs, so fc is only known mod fs/sym. Candidates tile the
+    whole band at spacing fs/sym; pick the one whose alias CELL holds the most signal power
+    (wrap-aware). Cell-energy beats a spectral centroid at the band edge, where a signal
+    straddling +-fs/2 corrupts the two-sided centroid (bpsk fc=0.495*fs picked fc=-5000)."""
     f, pxx = welch(x, fs=fs, nperseg=min(4096, x.size), return_onesided=False)
     p = np.maximum(pxx - np.median(pxx), 0)
-    cen = float(np.sum(f * p) / (np.sum(p) + 1e-30))
-    # the M-th-power tone fixes fc only mod fs/sym, so candidates tile the whole band at
-    # that spacing. range must reach +-fs/2 for EVERY sym: |k| up to sym//2 (the old fixed
-    # range(-2,3) covered sym<=4 but left 8psk beyond 0.3125*fs with no candidate).
+    # range must reach +-fs/2 for EVERY sym: |k| up to sym//2 (an old fixed range(-2,3) left
+    # 8psk beyond 0.3125*fs with no candidate).
     cands = [fc + k * fs / sym for k in range(-(sym // 2) - 1, sym // 2 + 2)
              if abs(fc + k * fs / sym) < 0.5 * fs]
-    return min(cands, key=lambda c: abs(c - cen))
+    half = fs / (2 * sym)                        # each candidate owns a fs/sym-wide cell
+    return max(cands, key=lambda c: float(p[np.abs(((f - c + fs / 2) % fs) - fs / 2) < half].sum()))
 
 
 def mix(x: np.ndarray, fs: float, fc: float) -> np.ndarray:

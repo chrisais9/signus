@@ -179,3 +179,16 @@ def test_post_echo_defold_rescue(taps, ts):
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
     assert r.mod == "qpsk"
     assert ber(r.symbols, "qpsk", tx) < 0.01
+
+
+@pytest.mark.parametrize("mod,baud,fc", [("bpsk", 2e4, 0.495e6), ("bpsk", 1e5, 0.5e6),
+                                         ("qpsk", 1e5, 0.49e6), ("qpsk", 1e5, 0.5e6),
+                                         ("8psk", 2e4, 0.49e6)])
+def test_band_edge_carrier_resolves(mod, baud, fc):
+    # carriers near/at +-fs/2 straddle the band; the cell-energy alias pick resolves them
+    # (a two-sided spectral centroid was corrupted by the wrap -> confident wrong decode).
+    from signus.cli import ber
+    x, tx = generate(GenParams(mod=mod, baud=baud, fs=1e6, n_symbols=8000, fc=fc, snr=25, seed=0))
+    r = analyze(x, Meta(1e6, "iq", "f32", "le"))
+    assert r.mod == mod
+    assert ber(r.symbols, mod, tx) < 0.01
