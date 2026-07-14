@@ -12,7 +12,10 @@ from .constellations import ideal_points
 
 
 def analytic(x: np.ndarray) -> np.ndarray:
-    """Complex passthrough as complex128; real input -> Hilbert analytic signal."""
+    """Complex passthrough as complex128; real input -> Hilbert analytic signal. Non-finite
+    samples are zeroed first: a single NaN/Inf otherwise spreads through every FFT (and Inf
+    overflows on the |x|^2 the estimators take)."""
+    x = np.nan_to_num(x, posinf=0.0, neginf=0.0)
     if np.iscomplexobj(x):
         return x.astype(np.complex128)
     return hilbert(np.asarray(x, dtype=np.float64)).astype(np.complex128)
@@ -123,6 +126,8 @@ def est_carrier(
         if par > best_par:
             best_par, best_s, sym = par, spec, p
 
+    if best_s is None:  # degenerate input (all-zero / no energy): no M-th-power tone exists
+        return 0.0, int(powers[0]), True
     ydb = 20 * np.log10(best_s + 1e-20)
     k = int(np.argmax(best_s))
     f_peak = freqs[k] + _parab(ydb, k) * (freqs[1] - freqs[0])
@@ -138,7 +143,11 @@ def resolve_alias(x: np.ndarray, fs: float, fc: float, sym: int) -> float:
     f, pxx = welch(x, fs=fs, nperseg=min(4096, x.size), return_onesided=False)
     p = np.maximum(pxx - np.median(pxx), 0)
     cen = float(np.sum(f * p) / (np.sum(p) + 1e-30))
-    cands = [fc + k * fs / sym for k in range(-2, 3) if abs(fc + k * fs / sym) < 0.5 * fs]
+    # the M-th-power tone fixes fc only mod fs/sym, so candidates tile the whole band at
+    # that spacing. range must reach +-fs/2 for EVERY sym: |k| up to sym//2 (the old fixed
+    # range(-2,3) covered sym<=4 but left 8psk beyond 0.3125*fs with no candidate).
+    cands = [fc + k * fs / sym for k in range(-(sym // 2) - 1, sym // 2 + 2)
+             if abs(fc + k * fs / sym) < 0.5 * fs]
     return min(cands, key=lambda c: abs(c - cen))
 
 

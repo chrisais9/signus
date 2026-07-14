@@ -141,3 +141,28 @@ def test_short_burst_baud_rescue(mod, nsym):
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
     assert r.mod == mod
     assert ber(r.symbols, r.mod, tx) < 0.01
+
+
+def test_8psk_high_carrier_offset():
+    # resolve_alias must tile the WHOLE band for sym=8 (was capped at 0.3125*fs -> wrong fc)
+    from signus.cli import ber
+    for fc in (0.35e6, 0.40e6, -0.45e6):
+        x, tx = generate(GenParams(mod="8psk", baud=2e4, n_symbols=8000, fs=1e6,
+                                   fc=fc, snr=25, seed=0))
+        r = analyze(x, Meta(1e6, "iq", "f32", "le"))
+        assert r.mod == "8psk" and abs(r.fc - fc) < 300 and r.lock > 60
+        assert ber(r.symbols, "8psk", tx) < 0.01
+
+
+def test_robust_to_nonfinite_and_degenerate():
+    # a corrupt sample must not derail a good signal; a dead capture must not crash
+    m = Meta(1e6, "iq", "f32", "le")
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=4000, fs=1e6, baud=1e5, snr=25, seed=1))
+    xn = x.copy()
+    xn[10], xn[20] = np.nan, np.inf
+    assert analyze(xn, m).mod == "qpsk"
+    from signus.pipeline import survey
+    for bad in (np.zeros(4000, complex), np.full(4000, np.nan, complex),
+                np.full(4000, np.inf, complex)):
+        analyze(bad, m)                     # degenerate -> nonsense result, but NO crash
+    survey(np.zeros(20000, complex), m)     # and the survey path too
