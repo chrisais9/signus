@@ -61,7 +61,7 @@ class Result:
     burst_idx: int = 0
 
     def to_json(self, max_points: int = 6000, views: bool = True) -> dict:
-        z = self.symbols
+        z = np.nan_to_num(self.symbols)   # a dead/DC capture -> NaN symbols -> invalid JSON
         if z.size > max_points:  # keep TIME ORDER: the UI animates this sequence
             z = z[np.linspace(0, z.size - 1, max_points).astype(int)]
         det = {"fc": round(self.fc, 3), "baud": round(self.baud, 3), "mod": self.mod,
@@ -81,7 +81,7 @@ class Result:
             "bursts": [{"start": s, "end": e} for s, e in self.bursts],
             "burst_idx": self.burst_idx,
             "detected": det,
-            "quality": {"lock": round(self.lock, 1), "mer_db": _r(self.mer_db),
+            "quality": {"lock": _r(self.lock, 1) or 0.0, "mer_db": _r(self.mer_db),
                         "evm": _r(self.evm, 4)},
             "snr_est_db": _r(self.snr_est),
             "eq": {"applied": self.eq_applied, "mode": self.eq_mode},
@@ -145,12 +145,19 @@ def _rescue(eq_fn, z: np.ndarray, seed_mod: str, symmetry: int) -> tuple:
     heavy ISI corrupts the ring test and even the 2/8 symmetry vote, so re-classify
     with the estimated symmetry AND the neutral order-4 gate, keep the best lock."""
     z1 = eq_fn(z, seed_mod)
-    best = None
+    cands = []
     for m in {cl.classify(z1, symmetry), cl.classify(z1, 4)}:   # symmetry too, per the docstring
         s = _fine(z1 if m == seed_mod else eq_fn(z, m), m)
-        q = cl.quality(s, m)
-        if best is None or q.lock > best[0].lock:
-            best = (q, s, m)
+        cands.append((cl.quality(s, m), s, m))
+    best = max(cands, key=lambda c: c[0].lock)
+    # Occam de-fold for the PSK point-doubling: CMA is modulus-only, so a bpsk signal under a
+    # multipath echo ALSO fits a qpsk ring at a marginally higher lock (phantom 2->4 points).
+    # A bpsk candidate that clears the accept floor cannot be an over-fit of qpsk, so prefer it.
+    # Only fires when symmetry==2 put bpsk in the set; a genuine qpsk reads symmetry 4 -> the
+    # candidate set is the qpsk singleton -> this branch is unreachable and it stays untouched.
+    lo = [c for c in cands if c[2] == "bpsk" and c[0].lock >= _EQ_FLOOR]
+    if lo and best[2] == "qpsk":
+        return lo[0]
     return best
 
 
@@ -290,12 +297,17 @@ class Emitter:
                        mer_db=_r(r.mer_db), evm=_r(r.evm, 4), family=r.family)
         return doc
 
-    def to_detail(self) -> dict:
+    def to_detail(self, rf_center: float | None = None) -> dict:
         """Web drill-down payload: the box summary plus, for a digital emitter, the
-        full analyze result so the UI reuses its single-signal detail view verbatim."""
+        full analyze result so the UI reuses its single-signal detail view verbatim.
+        The channel is demodulated at baseband (no rf_center), and r.fc is only the
+        residual within-channel offset -- so the emitter's absolute RF is the capture
+        centre plus abs_fc (the full offset from capture centre), injected here."""
         doc = self.to_json()
         if self.result is not None:
             doc["result"] = self.result.to_json()
+            if rf_center is not None:
+                doc["result"]["detected"]["rf_hz"] = round(rf_center + self.abs_fc, 3)
         return doc
 
 
@@ -356,7 +368,7 @@ def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
     return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt, "rf_center": meta.rf_center,
             "overview": {"fs": meta.fs, "n": int(xa.size), "spectrum": spectrum(xa, meta.fs),
                          "waterfall": waterfall(xa, meta.fs)},
-            "emitters": [e.to_detail() for e in sv.emitters]}
+            "emitters": [e.to_detail(meta.rf_center) for e in sv.emitters]}
 
 
 def survey_file(path: str, fs: float | None = None, fmt: str | None = None,

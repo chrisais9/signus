@@ -206,6 +206,20 @@ def test_marginal_bpsk_not_promoted_to_qpsk():
     assert ber(r.symbols, "bpsk", tx) < 0.01
 
 
+@pytest.mark.parametrize("phase,echo", [(0.9, 0.2), (0.9, 0.5), (0.6, 0.3), (1.2, 0.2)])
+def test_bpsk_multipath_not_promoted_to_qpsk(phase, echo):
+    # BPSK + one symbol-spaced echo + carrier offset enters the eq rescue; CMA is modulus-only
+    # so it ALSO fits a phantom qpsk ring at a marginally higher lock. symmetry==2 already put
+    # bpsk in the candidate set -- the Occam de-fold must keep bpsk (a lower order can't be an
+    # over-fit of qpsk), not report a confident wrong qpsk. Genuine qpsk (symmetry 4) is untouched.
+    from signus.cli import ber
+    x, tx = generate(GenParams(mod="bpsk", fs=1e6, baud=1e5, snr=16, fc=0.02e6, phase=phase,
+                               taps=(1.0, echo * np.exp(1j * 0.5)), tap_sym=1.0, seed=0))
+    r = analyze(x, Meta(1e6, "iq", "f32", "le"))
+    assert r.mod == "bpsk"
+    assert ber(r.symbols, "bpsk", tx) < 0.01
+
+
 def test_extreme_magnitude_and_empty_do_not_crash():
     m = Meta(1e6, "iq", "f32", "le")
     x, _ = generate(GenParams(mod="qpsk", n_symbols=4000, fs=1e6, baud=1e5, snr=25, seed=1))

@@ -216,6 +216,32 @@ def test_survey_web_carries_rf_center():
     assert web["mode"] == "survey" and web["rf_center"] == 162e6
 
 
+def test_survey_web_emitter_drilldown_reports_absolute_rf():
+    # the channel is demodulated at baseband (no rf_center) and r.fc is only the residual
+    # within-channel offset -> the drill-down must inject rf_center + abs_fc, not leave it None
+    from signus.pipeline import survey_web
+    mix, _ = _mixture()
+    web = survey_web(mix, Meta(FS, "iq", "f32", "le", False, rf_center=162e6))
+    digital = [e for e in web["emitters"] if "result" in e]
+    assert digital, "expected at least one demodulated emitter"
+    for e in digital:
+        rf = e["result"]["detected"]["rf_hz"]
+        assert rf == pytest.approx(162e6 + e["abs_fc"], abs=1)
+
+
+@pytest.mark.parametrize("x", [np.zeros(200000, complex), np.full(200000, 1.0 + 0j)])
+def test_survey_web_dead_air_is_valid_json(x):
+    # a silent / pure-DC capture degenerates lock+symbols to NaN; the payload must still be
+    # STRICT JSON (browsers reject literal NaN), so lock->0 and the constellation is sanitised
+    import json
+
+    from signus.pipeline import survey_web
+    web = survey_web(x, Meta(2e6, "iq", "f32", "le", False))
+    body = json.dumps(web)                       # default allow_nan would emit bare NaN tokens
+    assert "NaN" not in body
+    json.loads(body)                             # strict re-parse (browser JSON.parse) must pass
+
+
 # --- chirp / CSS (LoRa) detection (roadmap: chirp support) -------------------
 
 def _lora(sf, bw, nsym, fc, snr, seed, fs=FS, n=N):
