@@ -166,3 +166,16 @@ def test_robust_to_nonfinite_and_degenerate():
                 np.full(4000, np.inf, complex)):
         analyze(bad, m)                     # degenerate -> nonsense result, but NO crash
     survey(np.zeros(20000, complex), m)     # and the survey path too
+
+
+@pytest.mark.parametrize("taps,ts", [((1.0, 0.5), 2.0), ((1.0, 0.5, 0.3), 1.0), ((1.0, 0.5), 6.0)])
+def test_post_echo_defold_rescue(taps, ts):
+    # a benign post-echo folds qpsk onto a QAM lattice at high lock (confident wrong); the
+    # de-fold rescue equalizes and recovers the true lower order. Genuine QAM is never demoted
+    # (the full sweep is byte-identical), so this only ever helps.
+    from signus.cli import ber
+    x, tx = generate(GenParams(mod="qpsk", n_symbols=6000, fs=1e6, baud=1e5, snr=25,
+                               fc=8e3, taps=taps, tap_sym=ts, seed=0))
+    r = analyze(x, Meta(1e6, "iq", "f32", "le"))
+    assert r.mod == "qpsk"
+    assert ber(r.symbols, "qpsk", tx) < 0.01

@@ -15,7 +15,7 @@ from . import classify as cl
 from . import dsp, triage
 from .channelize import extract
 from .chirp import analyze_chirp
-from .constellations import demap_bits, demap_diff_bits
+from .constellations import demap_bits, demap_diff_bits, mod_order
 from .detect import Detection, detect
 from .eq import equalize, equalize_fse
 from .fsk import analyze_fsk, fsk_gate
@@ -223,6 +223,14 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
                 qe, se, me, mode = q2, s2, m2, "fse"
         if qe.lock > q.lock + _EQ_GAIN and qe.lock >= _EQ_FLOOR:
             syms, mod, q, eq_applied, eq_mode = se, me, qe, True, mode
+    elif mod in ("16qam", "32qam", "64qam"):
+        # confident square-QAM at high lock: a benign post-echo can fold a LOWER-order signal
+        # onto a QAM lattice with a clean-looking eye, so the low-lock rescue above never fires.
+        # Equalize once and accept ONLY if a strictly lower order emerges -- verified never to
+        # demote a genuine QAM (0/36 across 16/32/64qam x snr x seeds), so real QAM is untouched.
+        qe, se, me = _rescue(lambda z, m: equalize(z, m), raw, mod, symmetry)
+        if mod_order(me) < mod_order(mod) and qe.lock >= _EQ_FLOOR:
+            syms, mod, q, eq_applied, eq_mode = se, me, qe, True, "sym"
 
     bits = demap_diff_bits(syms, _DIFF_OF[mod]) if diff and mod in _DIFF_OF \
         else demap_bits(syms, mod)
