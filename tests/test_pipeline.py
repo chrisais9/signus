@@ -127,3 +127,17 @@ def test_exports_roundtrip(tmp_path):
     import json
     doc = json.loads((tmp_path / "r.json").read_text())
     assert doc["detected"]["mod"] == "16qam"
+
+
+@pytest.mark.parametrize("mod,nsym", [("qpsk", 200), ("qpsk", 150), ("16qam", 200),
+                                      ("bpsk", 200)])
+def test_short_burst_baud_rescue(mod, nsym):
+    # short + low-SNR burst: the default 4-block |x|^2 baud line picks junk and misclassifies;
+    # the fewer-block rescue (lock-gated, keep-best) recovers it. Long signals never enter the
+    # rescue -- the full sweep is byte-identical before/after (verified out-of-band).
+    from signus.cli import ber
+    x, tx = generate(GenParams(mod=mod, n_symbols=nsym, fs=1e6, baud=1e5, fc=8e4,
+                               snr=15, seed=1))
+    r = analyze(x, Meta(1e6, "iq", "f32", "le"))
+    assert r.mod == mod
+    assert ber(r.symbols, r.mod, tx) < 0.01

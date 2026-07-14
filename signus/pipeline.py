@@ -27,6 +27,7 @@ _EQ_LOCK = 60.0    # below this a linear signal is worth an equalizer attempt
 _EQ_GAIN = 3.0     # ...keep it only if lock improves by this much
 _EQ_FLOOR = 50.0   # ...and clears this floor, so a wrong-mod fit is never locked in
 _BAUD_GAIN = 5.0   # an in-band baud hypothesis must beat the global one by this lock
+_SHORT_LOCK = 60.0  # below this, retry the baud line with fewer blocks (short-burst rescue)
 _DIFF_OF = {"bpsk": "dbpsk", "qpsk": "dqpsk"}  # pi4dqpsk arrives as qpsk -> dqpsk
 
 
@@ -187,6 +188,20 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
         # in-band hypotheses too and let lock decide, with a clear margin.
         for lo in (0.80, 0.67):
             b2, c2 = dsp.est_baud(xd, meta.fs, lo=lo * bw, hi=1.02 * bw)
+            if abs(b2 - baud) <= 0.01 * b2:
+                continue
+            t = _demod(xd, meta.fs, b2, symmetry)
+            if t[5].lock > q.lock + _BAUD_GAIN:
+                alpha, ym, raw, mod, syms, q = t
+                baud, conf, fell = b2, c2, True
+
+    if q.lock < _SHORT_LOCK:
+        # short / low-SNR burst rescue: the default 4-block |x|^2 line splits the record
+        # too finely and locks a junk peak. Fewer, longer blocks give a stronger line (the
+        # carrier _blocks logic, applied to baud). Run both and keep only a clearly-better
+        # lock -- so a long, already-locked signal (CORE) never enters here and is untouched.
+        for nb in (2, 1):
+            b2, c2 = dsp.est_baud(xd, meta.fs, blocks=nb)
             if abs(b2 - baud) <= 0.01 * b2:
                 continue
             t = _demod(xd, meta.fs, b2, symmetry)

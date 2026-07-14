@@ -151,13 +151,15 @@ def mix(x: np.ndarray, fs: float, fc: float) -> np.ndarray:
 
 def est_baud(
     x: np.ndarray, fs: float, lo: float | None = None, hi: float | None = None,
+    blocks: int = 4,
 ) -> tuple[float, float]:
     """Cyclostationary line at the symbol rate in |x|^2; returns (baud, confidence).
-    Low confidence flags a weak line (near-zero rolloff); caller decides."""
+    Low confidence flags a weak line (near-zero rolloff); caller decides. Fewer blocks =
+    a longer, stronger line (worth trying on a short burst where the default 4 is too weak)."""
     u = np.abs(x) ** 2
     u = u - u.mean()
-    blk = u.size // 4
-    segs = [u[i * blk:(i + 1) * blk] for i in range(4)] if blk >= 8 else [u]
+    blk = u.size // blocks
+    segs = [u[i * blk:(i + 1) * blk] for i in range(blocks)] if blk >= 8 else [u]
     nfft = 1 << max(16, int(np.ceil(np.log2(max(s.size for s in segs)))))
     acc = np.zeros(nfft // 2 + 1)
     for s in segs:
