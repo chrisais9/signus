@@ -168,7 +168,8 @@ def test_robust_to_nonfinite_and_degenerate():
     survey(np.zeros(20000, complex), m)     # and the survey path too
 
 
-@pytest.mark.parametrize("taps,ts", [((1.0, 0.5), 2.0), ((1.0, 0.5, 0.3), 1.0), ((1.0, 0.5), 6.0)])
+@pytest.mark.parametrize("taps,ts", [((1.0, 0.5), 2.0), ((1.0, 0.5, 0.3), 1.0),
+                                     ((1.0, 0.5), 3.0), ((1.0, 0.5), 6.0)])
 def test_post_echo_defold_rescue(taps, ts):
     # a benign post-echo folds qpsk onto a QAM lattice at high lock (confident wrong); the
     # de-fold rescue equalizes and recovers the true lower order. Genuine QAM is never demoted
@@ -192,3 +193,24 @@ def test_band_edge_carrier_resolves(mod, baud, fc):
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
     assert r.mod == mod
     assert ber(r.symbols, mod, tx) < 0.01
+
+
+def test_marginal_bpsk_not_promoted_to_qpsk():
+    # a marginal BPSK (lock just under _EQ_LOCK) triggers the eq rescue; _rescue must re-classify
+    # with the estimated symmetry (2), not only order-4, else it is forced to a confident QPSK.
+    from signus.cli import ber
+    x, tx = generate(GenParams(mod="bpsk", snr=16, n_symbols=8000, fs=1e6, baud=4e5,
+                               rolloff=0.05, seed=0))
+    r = analyze(x, Meta(1e6, "iq", "i16", "le"))
+    assert r.mod == "bpsk"
+    assert ber(r.symbols, "bpsk", tx) < 0.01
+
+
+def test_extreme_magnitude_and_empty_do_not_crash():
+    m = Meta(1e6, "iq", "f32", "le")
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=4000, fs=1e6, baud=1e5, snr=25, seed=1))
+    xn = x.copy()
+    xn[100] = 1e300 + 1e300j                          # finite but overflows |x|^2 -> was a crash
+    assert analyze(xn, m).mod == "qpsk"
+    with pytest.raises(ValueError):                   # empty -> clean rejection, not a crash
+        analyze(np.zeros(0, complex), m)

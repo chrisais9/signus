@@ -292,3 +292,19 @@ def test_server_survey_and_analyze_endpoints_smoke():
         assert bad.status == 400
     finally:
         srv.shutdown()
+
+
+def test_survey_wide_box_is_isolated_not_duplicate():
+    # a wide detection box (bw > ~0.28*fs) must still be low-passed to its own band, else extract
+    # returns the whole capture and analyze re-demods a different, stronger emitter (confident dup).
+    def _emit(mod, baud, fc, pdb, sd):
+        x, _ = generate(GenParams(mod=mod, n_symbols=8000, fs=FS, baud=baud, fc=fc,
+                                  snr=60, seed=sd))
+        x = x[:N] if x.size >= N else np.concatenate([x, np.zeros(N - x.size, complex)])
+        return x / np.sqrt(np.mean(np.abs(x) ** 2)) * 10 ** (pdb / 20)
+    rng = np.random.default_rng(3)
+    mix = _emit("16qam", 130e3, 250e3, -6, 1) + _emit("qpsk", 20e3, 120e3, 6, 2) \
+        + 0.1 * (rng.standard_normal(N) + 1j * rng.standard_normal(N))
+    s = survey(mix, Meta(FS, "iq", "f32", "le", False))
+    wide = _match(s.emitters, 250e3, tol=12e3)
+    assert wide and wide.result and wide.result.mod == "16qam"

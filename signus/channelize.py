@@ -18,9 +18,12 @@ def extract(x: np.ndarray, fs: float, det: Detection, *, target_frac: float = 0.
     want = max(det.bw * pad, fs * 1e-4)                  # passband to keep
     d = max(1, int(fs / (want / target_frac)))          # want ~= target_frac * fs/d
     fs_ch = fs / d
+    # Low-pass to the box ALWAYS, even when d==1 (a wide box, bw > ~0.28*fs): otherwise the
+    # "channel" is the whole capture merely mixed, and analyze locks onto a DIFFERENT, stronger
+    # emitter (reported as a confident duplicate). Decimate only when there is room to.
+    cutoff = min(0.9 * fs_ch / 2, want / 2) / (fs / 2)
+    bb = np.convolve(bb, firwin(ntaps, cutoff), "same")
     if d > 1:
-        cutoff = min(0.9 * fs_ch / 2, want / 2) / (fs / 2)
-        bb = np.convolve(bb, firwin(ntaps, cutoff), "same")
         bb = resample_poly(bb, 1, d)
     a, b = int(det.t0 // d), int(det.t1 // d)
     if b - a >= 256:                                     # trim empty time, keep guard

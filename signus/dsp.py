@@ -16,6 +16,7 @@ def analytic(x: np.ndarray) -> np.ndarray:
     samples are zeroed first: a single NaN/Inf otherwise spreads through every FFT (and Inf
     overflows on the |x|^2 the estimators take)."""
     x = np.nan_to_num(x, posinf=0.0, neginf=0.0)
+    x = np.where(np.abs(x) > 1e150, 0.0, x)   # a finite spike that overflows |x|^2 is corrupt too
     if np.iscomplexobj(x):
         return x.astype(np.complex128)
     return hilbert(np.asarray(x, dtype=np.float64)).astype(np.complex128)

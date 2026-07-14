@@ -146,7 +146,7 @@ def _rescue(eq_fn, z: np.ndarray, seed_mod: str, symmetry: int) -> tuple:
     with the estimated symmetry AND the neutral order-4 gate, keep the best lock."""
     z1 = eq_fn(z, seed_mod)
     best = None
-    for m in {cl.classify(z1, 4)}:
+    for m in {cl.classify(z1, symmetry), cl.classify(z1, 4)}:   # symmetry too, per the docstring
         s = _fine(z1 if m == seed_mod else eq_fn(z, m), m)
         q = cl.quality(s, m)
         if best is None or q.lock > best[0].lock:
@@ -160,6 +160,8 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
     `burst` selects one detected burst (default: the most energetic)."""
     x = dsp.analytic(x)
     x = x - x.mean()  # DC block: LO leakage otherwise corrupts every estimator
+    if x.size < 64:   # empty / trivially short: nothing to estimate, and it crashes downstream
+        raise ValueError(f"신호가 너무 짧습니다 ({x.size} 샘플)")
     bursts = dsp.find_bursts(x, meta.fs)
     if burst is None or not 0 <= burst < len(bursts):
         burst = int(np.argmax([np.sum(np.abs(x[s:e]) ** 2) for s, e in bursts]))
@@ -229,8 +231,16 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
         # Equalize once and accept ONLY if a strictly lower order emerges -- verified never to
         # demote a genuine QAM (0/36 across 16/32/64qam x snr x seeds), so real QAM is untouched.
         qe, se, me = _rescue(lambda z, m: equalize(z, m), raw, mod, symmetry)
+        mode = "sym"
+        if mod_order(me) < mod_order(mod) and qe.lock < _EQ_FLOOR:
+            # a lower order emerged but the symbol-spaced eye stayed shut (echo > ~2 symbols);
+            # retry T/2 fractionally-spaced. Only runs once a de-fold is INDICATED, so a genuine
+            # QAM (no lower order) never pays for the FSE.
+            qe, se, me = _rescue(lambda z, m: equalize_fse(z, m),
+                                 dsp.timing(ym, 4, out=2), mod, symmetry)
+            mode = "fse"
         if mod_order(me) < mod_order(mod) and qe.lock >= _EQ_FLOOR:
-            syms, mod, q, eq_applied, eq_mode = se, me, qe, True, "sym"
+            syms, mod, q, eq_applied, eq_mode = se, me, qe, True, mode
 
     bits = demap_diff_bits(syms, _DIFF_OF[mod]) if diff and mod in _DIFF_OF \
         else demap_bits(syms, mod)
