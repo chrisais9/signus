@@ -5,7 +5,7 @@ always sit at CV>=0.25, while FSK/FM/CW are constant-envelope (CV<=0.05)."""
 
 import numpy as np
 
-from .chirp import is_chirp
+from .chirp import is_chirp, sweeps_band
 from .fsk import fsk_gate
 
 _CV_CE = 0.15      # constant-envelope ceiling: below it a non-FSK signal is analog/tone
@@ -29,6 +29,12 @@ def family(x: np.ndarray, fs: float) -> str:
     """One of 'fsk' | 'chirp' | 'linear' | 'analog' | 'tone'. 'linear'/'fsk' go to the
     demod; 'chirp'/'analog'/'tone' are reported as-is (never force-fit to a constellation)."""
     if fsk_gate(x, fs):
+        # a linear FMCW chirp / CSS (LoRa) trips fsk_gate too -- its swept IF reads bimodal to
+        # the gate -- and would then be force-demodulated into confident garbage FSK symbols.
+        # is_chirp fires on both a chirp and (at some h/baud) real FSK, so the IF-SWEEP test
+        # breaks the tie: a genuine band-sweep is characterized as chirp, real FSK stays FSK.
+        if is_chirp(x, fs) and sweeps_band(x, fs):
+            return "chirp"
         return "fsk"
     if is_chirp(x, fs):            # linear chirp / CSS (LoRa) -- constant-envelope, would
         return "chirp"            # otherwise fall through to 'analog' (no M-power tone)

@@ -289,6 +289,41 @@ def test_survey_reports_lora_as_chirp():
     assert chirps[0].info["sf"] == 9
 
 
+def _fmcw_saw(bw, T, fc, snr, seed, n=N):
+    """Linear FMCW (sawtooth) chirp, independent of the receiver (anti-shared-bug)."""
+    rng = np.random.default_rng(seed)
+    P = int(T * FS)
+    t = np.arange(n)
+    ramp = np.exp(2j * np.pi * np.cumsum(-bw / 2 + bw * (t % P) / P) / FS)
+    x = ramp * np.exp(2j * np.pi * fc * t / FS)
+    nv = 1 / 10 ** (snr / 10)
+    return x + np.sqrt(nv / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+
+
+@pytest.mark.parametrize("bw,T", [(80e3, 2e-3), (40e3, 1e-3), (160e3, 5e-3)])
+def test_survey_fmcw_chirp_not_demodulated_as_fsk(bw, T):
+    # a linear FMCW radar chirp trips fsk_gate (its swept IF reads bimodal) AND is_chirp; the
+    # IF-SWEEP tiebreaker must label it 'chirp' and NEVER force-fit confident garbage FSK symbols.
+    rng = np.random.default_rng(0)
+    x = _fmcw_saw(bw, T, 2e5, 22, 0) + np.sqrt(0.02 / 2) * (
+        rng.standard_normal(N) + 1j * rng.standard_normal(N))
+    s = survey(x, Meta(FS, "iq", "f32", "le", False))
+    e = min(s.emitters, key=lambda e: abs(e.abs_fc - 2e5))
+    assert e.kind == "chirp" and e.result is None       # not 'fsk' with a confident garbage mod
+
+
+@pytest.mark.parametrize("sf", [7, 12])
+def test_survey_lora_sf7_sf12_not_stolen_by_fsk(sf):
+    # LoRa SF7/SF12 extracted channels trip fsk_gate (unlike SF9); before the IF-sweep
+    # tiebreaker they were mislabelled 'fsk'. They must be characterized as chirp.
+    rng = np.random.default_rng(1)
+    x = _lora(sf, 125e3, 40, 2.2e5, 22, 3) + np.sqrt(0.02 / 2) * (
+        rng.standard_normal(N) + 1j * rng.standard_normal(N))
+    s = survey(x, Meta(FS, "iq", "f32", "le", False))
+    e = min(s.emitters, key=lambda e: abs(e.abs_fc - 2.2e5))
+    assert e.kind == "chirp" and e.result is None
+
+
 def test_server_survey_and_analyze_endpoints_smoke():
     import http.client
     import json

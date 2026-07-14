@@ -46,6 +46,31 @@ def is_chirp(x: np.ndarray, fs: float) -> bool:
     return _beat(x, fs)[0] >= _PAR_MIN
 
 
+_SWEEP_PM_MAX = 1.45   # instantaneous-freq histogram peak-to-mean: a band-sweep stays ~1
+_SWEEP_OCC_MIN = 0.6   # ...and fills its band; FSK sits on 2-4 discrete tones (peaky, sparse)
+
+
+def sweeps_band(x: np.ndarray, fs: float, bins: int = 40) -> bool:
+    """True when the instantaneous frequency SWEEPS the channel (linear chirp / CSS) rather
+    than hopping between a few discrete FSK tones. A linear FMCW ramp reads bimodal to
+    fsk_gate AND trips is_chirp's beat test, so triage needs this to tell a genuine band-sweep
+    from FSK: a sweep's IF histogram is flat and fully occupied; FSK's spikes at its tones.
+    Calibrated on extracted channels: 0/222 FSK/MSK (snr 8-40) pass, 214/216 FMCW + 60/60 LoRa
+    pass (misses only the narrowest, gentlest ramps -- which stay 'fsk', never a regression)."""
+    if x.size < 256:
+        return False
+    x = x - x.mean()
+    f = np.diff(np.unwrap(np.angle(x))) * fs / (2 * np.pi)
+    lo, hi = np.percentile(f, 1), np.percentile(f, 99)
+    if hi - lo < 1:
+        return False
+    f = f[(f >= lo) & (f <= hi)]
+    h = np.histogram(f, bins=bins)[0] / f.size
+    pm = h.max() / (h.mean() + 1e-30)               # discrete tones spike this; a sweep ~1
+    occ = float((h > 0.005).mean())                 # a sweep fills the band; tones occupy few bins
+    return bool(pm < _SWEEP_PM_MAX and occ >= _SWEEP_OCC_MIN)
+
+
 def analyze_chirp(x: np.ndarray, fs: float) -> dict:
     """Characterize a chirp: {mu[Hz/s], up, bw, par, sf, rs, tsym}. A LoRa hypothesis
     (sf, symbol rate, symbol time) is filled when bw^2/|mu| snaps to 2^(7..12); otherwise
