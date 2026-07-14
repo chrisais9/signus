@@ -100,3 +100,17 @@ def test_demod_cfo(mod, h):
     assert abs(r["h"] - h) < 0.15
     assert r["lock"] >= 60
     assert _ber(r["bits"], tx, bps) <= (0.002 if mod == "fsk4" else 0.0)
+
+
+def test_fsk_gate_rejects_high_baud_psk_keeps_real_fsk():
+    # recalibrated _CV_MAX: high-symbol-rate constant-modulus PSK (fs/baud~3) used to
+    # misroute into the FSK demod; real FSK (down to the supported snr-10 floor) must stay in.
+    from signus.fsk import fsk_gate
+    from signus.gen import GenParams, generate
+    for mod, baud in (("qpsk", 1e6 / 3), ("8psk", 4e5), ("pi4dqpsk", 1e6 / 3)):
+        x, _ = generate(GenParams(mod=mod, fs=1e6, baud=baud, n_symbols=6000, snr=20, seed=0))
+        assert not fsk_gate(x, 1e6), f"{mod} high-baud still misgated to FSK"
+    for mod, h in (("fsk2", 0.7), ("fsk4", 1.0), ("msk", 0.5)):
+        # worst FSK corner (snr10, high baud) must still gate True
+        x, _ = generate(GenParams(mod=mod, fs=1e6, baud=2e5, snr=10, h=h, seed=0))
+        assert fsk_gate(x, 1e6), f"{mod} FSK no longer detected"

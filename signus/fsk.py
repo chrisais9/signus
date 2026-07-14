@@ -8,7 +8,10 @@ from scipy.ndimage import uniform_filter1d
 from .constellations import fsk_levels, to_bits
 from .dsp import _kmeans1d, _parab, analytic
 
-_CV_MAX = 0.30    # envelope coeff-of-variation ceiling (FSK<=0.22, bpsk/dbpsk~0.40)
+_CV_MAX = 0.24    # envelope coeff-of-variation ceiling. Recalibrated on a broad grid: real
+# FSK (all h x SNR>=10 x high baud) tops out at cv 0.224, but constant-modulus PSK at very
+# high baud (fs/baud~3) or near +-fs/2 dips to cv>=0.250 and used to slip the old 0.30 gate
+# (false FSK). 0.24 sits in the 0.026 gap -> keeps every real FSK, rejects the PSK misfires.
 _SEP_MIN = 3.1    # instantaneous-freq 2-means separation floor (FSK>=3.39, rest<=2.85)
 _K4_RATIO = 2.6   # sp(k=2)/sp(k=4) collapse above which 4 levels beat 2
 
