@@ -30,6 +30,7 @@ _EQ_FLOOR = 50.0   # ...and clears this floor, so a wrong-mod fit is never locke
 _BAUD_GAIN = 5.0   # an in-band baud hypothesis must beat the global one by this lock
 _SHORT_LOCK = 60.0  # below this, retry the baud line with fewer blocks (short-burst rescue)
 _SYNC_LOCK = 60.0   # below this, try a repeated-preamble carrier/timing sync (packetized bursts)
+_ALIAS_MARGIN = 8.0  # a preamble carrier alias must beat the next by this lock, else it's ambiguous
 _DIFF_OF = {"bpsk": "dbpsk", "qpsk": "dqpsk"}  # pi4dqpsk arrives as qpsk -> dqpsk
 
 
@@ -270,30 +271,34 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
         if ps is not None:
             # The Schmidl-Cox CFO is ambiguous modulo fs/P = baud/L: an M-PSK carrier off by baud/L
             # rotates a whole constellation position per symbol, so the eye still looks locked but
-            # the bits are shifted -> a confident WRONG decode if the nearest alias is trusted. But
-            # there are exactly L such aliases across +-baud/2, so scan ALL (k in +-L/2) per baud
-            # candidate; the CORRECT alias gives the cleanest eye (highest lock) and keep-best wins.
-            done = False
+            # the bits shift -> a confident WRONG decode if the wrong alias is trusted. The coarse
+            # M-th-power fc lands within ~1 alias step of the truth even on these short bursts, so
+            # CENTRE the alias scan on it (k0) and sweep +-3 steps -- this reaches the correct alias
+            # for any offset (not just |fc|<baud/2); keep-best over them picks the cleanest eye.
+            step = meta.fs / ps.period
+            k0 = round((fc - ps.cfo_hz) / step)
+            cands = []
             for b2 in sorted({round(meta.fs * L / ps.period) for L in (3, 4, 6, 8)}):
-                nalias = max(1, round(b2 * ps.period / meta.fs))     # = L: aliases within +-baud/2
-                for k in range(-(nalias // 2), nalias // 2 + 1):
-                    cfo = ps.cfo_hz + k * meta.fs / ps.period
+                for k in range(k0 - 3, k0 + 4):
+                    cfo = ps.cfo_hz + k * step
                     data = dsp.mix(xb, meta.fs, cfo)[ps.end:]
                     if data.size < 256:
                         continue
                     for sm in (2, 4, 8):
                         t = _demod(data, meta.fs, float(b2), sm)
-                        if t[5].lock > q.lock + _EQ_GAIN:
-                            alpha, ym, raw, mod, syms, q = t
-                            fc, baud, symmetry = cfo, float(b2), sm
-                            eq_applied, eq_mode, pre = False, None, ps
-                            done = q.lock > 95       # a pristine lock -> stop searching aliases
-                        if done:
-                            break
-                    if done:
-                        break
-                if done:
-                    break
+                        cands.append((t[5].lock, cfo, float(b2), sm, t))
+            cands.sort(key=lambda c: -c[0])
+            # Adjacent aliases both look like clean M-PSK, so lock alone can pick the WRONG one by a
+            # hair. Require the winner to beat the best DIFFERENT-carrier candidate by a clear gap;
+            # otherwise the alias is genuinely ambiguous -> leave the honest low-lock result rather
+            # than emit a confident wrong decode. (Same-carrier baud/sym variants do not compete.)
+            if cands and cands[0][0] > q.lock + _EQ_GAIN:
+                top = cands[0]
+                other = next((c for c in cands if abs(c[1] - top[1]) > step / 2), None)
+                if other is None or top[0] - other[0] >= _ALIAS_MARGIN:
+                    alpha, ym, raw, mod, syms, q = top[4]
+                    fc, baud, symmetry = top[1], top[2], top[3]
+                    eq_applied, eq_mode, pre = False, None, ps
 
     bits = demap_diff_bits(syms, _DIFF_OF[mod]) if diff and mod in _DIFF_OF \
         else demap_bits(syms, mod)
