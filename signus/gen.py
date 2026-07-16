@@ -47,6 +47,9 @@ class GenParams:
     h: float = 0.5             # FSK modulation index (msk forces 0.5)
     taps: tuple = field(default_factory=tuple)  # multipath channel gains (complex)
     tap_sym: float = 1.0       # echo delay between taps, in SYMBOLS
+    preamble: tuple = (0, 0)   # (block_len_syms L, repeats R): an L-symbol block tiled R times
+    sync_word: tuple = ()      # fixed symbol-index marker placed after the preamble
+    payload: object = None     # None=random data; else explicit bits (str/0-1 seq) as the data
 
 
 def _tx_rrc(a: float, sps: int) -> np.ndarray:
@@ -63,17 +66,55 @@ def _tx_rrc(a: float, sps: int) -> np.ndarray:
     return h / np.sqrt(np.sum(h**2))
 
 
+def _payload_indices(payload: object, mod: str, alpha: int) -> np.ndarray:
+    """Explicit data bits (str '0110...' or a 0/1 sequence) -> symbol indices for `mod`.
+    Inverse of the transmit labelling, so the decoded data bits round-trip to `payload`."""
+    k = max(1, mod_order(mod).bit_length() - 1)
+    if isinstance(payload, str):
+        b = np.array([int(c) for c in payload if c in "01"], dtype=int)
+    else:
+        b = np.asarray(payload, dtype=int).ravel()
+    b = b[: b.size - (b.size % k)]                       # drop a ragged final symbol
+    if b.size == 0:
+        return np.zeros(0, dtype=int)
+    labels = (b.reshape(-1, k) * (1 << np.arange(k - 1, -1, -1))).sum(1)   # MSB-first (to_bits)
+    if mod in DIFF_MODS:
+        return labels % alpha                           # diff: the label IS the transition index
+    lab = np.asarray(bit_labels(mod))                   # idx -> label; invert to label -> idx
+    inv = np.zeros(int(lab.max()) + 1, dtype=int)
+    inv[lab] = np.arange(lab.size)
+    return inv[labels % (1 << k)]
+
+
+def _content(p: GenParams, rng: np.random.Generator, alpha: int) -> tuple[np.ndarray, np.ndarray]:
+    """Build [preamble][sync_word][data] symbol indices for alphabet size `alpha`, returning
+    (all_idx, data_idx) -- ground-truth bits come from the DATA portion only. The preamble is an
+    L-symbol block tiled R times, drawn from a DEDICATED stream so the main `rng` is untouched;
+    with no preamble/sync/payload the single data draw matches the legacy output byte-for-byte."""
+    head = []
+    pre = p.preamble if isinstance(p.preamble, (tuple, list)) and len(p.preamble) == 2 else (0, 0)
+    L, R = int(pre[0]), int(pre[1])
+    if L > 0 and R > 0:
+        block = np.random.default_rng(p.seed ^ 0x9E3779B9).integers(0, alpha, L)
+        head.append(np.tile(block, R))
+    if len(p.sync_word):
+        head.append(np.asarray(p.sync_word, dtype=int) % alpha)
+    data = rng.integers(0, alpha, p.n_symbols) if p.payload is None \
+        else _payload_indices(p.payload, p.mod, alpha)
+    return (np.concatenate([*head, data]) if head else data), data
+
+
 def _linear(p: GenParams, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     """PSK/QAM/OQPSK/differential: symbols -> RRC shaping at _OS samples/symbol."""
     m = mod_order(p.mod)
-    idx = rng.integers(0, m, p.n_symbols)
+    idx, data = _content(p, rng, m)
     if p.mod in DIFF_MODS:  # data lives in the phase TRANSITIONS
-        bits = to_bits(idx, p.mod)
+        bits = to_bits(data, p.mod)
         sym = np.exp(1j * np.cumsum(DIFF_PHASES[p.mod][idx]))
     else:
-        bits = to_bits(bit_labels(p.mod)[idx], p.mod)
+        bits = to_bits(bit_labels(p.mod)[data], p.mod)
         sym = ideal_points(p.mod)[idx]
-    up = np.zeros(p.n_symbols * _OS, dtype=complex)
+    up = np.zeros(idx.size * _OS, dtype=complex)
     up[::_OS] = sym
     x = np.convolve(up, _tx_rrc(p.rolloff, _OS), mode="same")
     if p.mod == "oqpsk":  # Q rail delayed half a symbol
@@ -84,8 +125,8 @@ def _linear(p: GenParams, rng: np.random.Generator) -> tuple[np.ndarray, np.ndar
 def _fsk(p: GenParams, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     """CPFSK/MSK: Gray level sequence -> continuous-phase frequency modulation."""
     levels, labels = fsk_levels(p.mod)
-    idx = rng.integers(0, levels.size, p.n_symbols)
-    bits = to_bits(labels[idx], p.mod)
+    idx, data = _content(p, rng, levels.size)
+    bits = to_bits(labels[data], p.mod)
     h = 0.5 if p.mod == "msk" else p.h
     f_cps = np.repeat(levels[idx], _OS) * h / 2  # instantaneous freq, cycles/symbol
     x = np.exp(2j * np.pi * np.cumsum(f_cps) / _OS)

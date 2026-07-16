@@ -21,6 +21,7 @@ from .eq import equalize, equalize_fse
 from .fsk import analyze_fsk, fsk_gate
 from .sigio import Meta, parse_name, read
 from .spectrum import spectrum, waterfall
+from .sync import find_preamble
 
 _BITS_CAP = 65536
 _EQ_LOCK = 60.0    # below this a linear signal is worth an equalizer attempt
@@ -28,6 +29,7 @@ _EQ_GAIN = 3.0     # ...keep it only if lock improves by this much
 _EQ_FLOOR = 50.0   # ...and clears this floor, so a wrong-mod fit is never locked in
 _BAUD_GAIN = 5.0   # an in-band baud hypothesis must beat the global one by this lock
 _SHORT_LOCK = 60.0  # below this, retry the baud line with fewer blocks (short-burst rescue)
+_SYNC_LOCK = 60.0   # below this, try a repeated-preamble carrier/timing sync (packetized bursts)
 _DIFF_OF = {"bpsk": "dbpsk", "qpsk": "dqpsk"}  # pi4dqpsk arrives as qpsk -> dqpsk
 
 
@@ -59,6 +61,7 @@ class Result:
     baud_fallback: bool = False
     bursts: list = field(default_factory=list)
     burst_idx: int = 0
+    preamble: object = None        # sync.Preamble when a repeated preamble drove the decode
 
     def to_json(self, max_points: int = 6000, views: bool = True) -> dict:
         z = np.nan_to_num(self.symbols)   # a dead/DC capture -> NaN symbols -> invalid JSON
@@ -74,6 +77,10 @@ class Result:
         det["rf_hz"] = None if rf is None else round(rf + self.fc, 3)
         if self.h is not None:
             det["h"] = round(self.h, 3)
+        if self.preamble is not None:                 # a repeated preamble drove the sync
+            p = self.preamble
+            det["preamble"] = {"period": p.period, "cfo_hz": round(p.cfo_hz, 1),
+                               "conf": round(p.conf, 2), "start": p.start, "end": p.end}
         doc = {
             "fs": self.meta.fs, "fmt": self.meta.fmt, "rf_center": self.meta.rf_center,
             "family": self.family, "n_samples": int(self.iq_corr.size),
@@ -218,7 +225,7 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
                 alpha, ym, raw, mod, syms, q = t
                 baud, conf, fell = b2, c2, True
 
-    eq_applied, eq_mode = False, None
+    eq_applied, eq_mode, pre = False, None, None
     if q.lock < _EQ_LOCK:  # ISI (multipath) is what a phase-only loop cannot fix
         # CMA is modulus-only, so it opens the eye without knowing the constellation.
         qe, se, me = _rescue(lambda z, m: equalize(z, m), raw, mod, symmetry)
@@ -249,6 +256,40 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
         if mod_order(me) < mod_order(mod) and qe.lock >= _EQ_FLOOR:
             syms, mod, q, eq_applied, eq_mode = se, me, qe, True, mode
 
+    if q.lock < _SYNC_LOCK:
+        # packetized-burst rescue -- LAST, after the equalizer: a repeated preamble pins the
+        # carrier/baud/timing from only a few symbols, where the blind M-th-power estimator (needing
+        # many symbols to average) fails. Runs only if the eq rescue above did NOT lift the lock, so
+        # a multipath signal (which the eq handles, and whose ISI can fake a short period) never
+        # reaches here. Detect the preamble, mix by its CFO, demod the DATA past it, keep-best -- a
+        # random / no-preamble signal yields no plateau or a CFO that does not improve lock and is
+        # dropped (the sweep stays byte-identical). The preamble period P = L*sps supplies the baud
+        # (fs*L/P per block length L), the phase slope gives the carrier (+-fs/P resolves the L-fold
+        # alias); every PSK/QAM symmetry is tried -- the right (carrier, baud, sym) locks clean.
+        ps = find_preamble(xb, meta.fs, baud_hint=baud)
+        if ps is not None:
+            bauds = {round(meta.fs * L / ps.period) for L in (3, 4, 6, 8)}
+            done = False
+            for k in (0, 1, -1, 2, -2):     # +-fs/P steps span a big carrier offset (up to baud/2)
+                data = dsp.mix(xb, meta.fs, ps.cfo_hz + k * meta.fs / ps.period)[ps.end:]
+                if data.size < 256:
+                    continue
+                for b2 in bauds:
+                    for sm in (2, 4, 8):
+                        t = _demod(data, meta.fs, float(b2), sm)
+                        if t[5].lock > q.lock + _EQ_GAIN:
+                            alpha, ym, raw, mod, syms, q = t
+                            fc = ps.cfo_hz + k * meta.fs / ps.period
+                            baud, symmetry, eq_applied, eq_mode = float(b2), sm, False, None
+                            pre = ps
+                            done = q.lock > 90       # a clean lock -> stop searching
+                        if done:
+                            break
+                    if done:
+                        break
+                if done:
+                    break
+
     bits = demap_diff_bits(syms, _DIFF_OF[mod]) if diff and mod in _DIFF_OF \
         else demap_bits(syms, mod)
     return Result(meta, "linear", (s, e), fc, baud, mod, q.lock, syms, bits, ym,
@@ -256,7 +297,7 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
                   rolloff=alpha, evm=q.evm, mer_db=q.mer_db, occupied=q.occupied,
                   snr_est=cl.snr_m2m4(syms, mod), eq_applied=eq_applied, eq_mode=eq_mode,
                   alias_resolved=abs(fc - fc0) > 1.0, baud_fallback=fell,
-                  bursts=bursts, burst_idx=burst)
+                  bursts=bursts, burst_idx=burst, preamble=pre)
 
 
 def analyze_file(path: str, fs: float | None = None, fmt: str | None = None,
