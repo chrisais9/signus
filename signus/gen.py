@@ -76,7 +76,7 @@ def _payload_indices(payload: object, mod: str, alpha: int) -> np.ndarray:
         b = np.asarray(payload, dtype=int).ravel()
     b = b[: b.size - (b.size % k)]                       # drop a ragged final symbol
     if b.size == 0:
-        return np.zeros(0, dtype=int)
+        raise ValueError(f"payload가 너무 짧습니다: {mod}는 심볼당 {k}비트가 필요합니다")
     labels = (b.reshape(-1, k) * (1 << np.arange(k - 1, -1, -1))).sum(1)   # MSB-first (to_bits)
     if mod in DIFF_MODS:
         return labels % alpha                           # diff: the label IS the transition index

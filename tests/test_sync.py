@@ -31,6 +31,15 @@ def test_explicit_payload_round_trips():
     assert "".join(map(str, bits)) == pattern      # the exact bits we asked to transmit
 
 
+@pytest.mark.parametrize("mod,payload", [("qpsk", ""), ("qpsk", []), ("64qam", "101"),
+                                         ("fsk2", ""), ("8psk", "01")])
+def test_too_short_payload_rejected_cleanly(mod, payload):
+    # a payload shorter than one symbol's bits used to reach np.convolve as an empty array
+    # (raw ValueError) or emit an empty/NaN FSK stream -- it must be a clean, explained rejection.
+    with pytest.raises(ValueError):
+        generate(GenParams(mod=mod, payload=payload))
+
+
 def test_defaults_unchanged_when_no_preamble():
     # (0,0)/None must reproduce the legacy stream so the sweep stays byte-identical
     a, ba = generate(GenParams(mod="16qam", fs=FS, baud=1e5, fc=8e3, snr=24, seed=0))
@@ -80,6 +89,33 @@ def test_packetized_short_burst_recovered(mod, nsym, snr, fc, seed):
     assert ber(r.symbols, r.mod, tx) < 0.02
     assert r.preamble is not None                  # the rescue drove this decode
     assert r.to_json(views=False)["detected"]["preamble"]["period"] > 0
+
+
+@pytest.mark.parametrize("baud,fc,preamble", [(5e4, 1.6e4, (8, 8)), (8e4, 2.6e4, (8, 8))])
+def test_large_carrier_offset_alias_resolved(baud, fc, preamble):
+    # the preamble CFO is ambiguous modulo baud/L: an 8psk carrier off by baud/L rotates a whole
+    # constellation position per symbol, so a nearby WRONG alias still locks (~68) with garbage
+    # bits. The rescue must scan all L aliases and keep the correct (cleanest-eye) one.
+    for sd in range(6):
+        x, tx = generate(GenParams(mod="8psk", fs=FS, baud=baud, fc=fc, snr=16,
+                                   n_symbols=250, seed=sd, preamble=preamble))
+        r = analyze(x, M)
+        assert not (r.lock >= 60 and ber(r.symbols, r.mod, tx) > 0.05), "confident wrong alias"
+
+
+def test_rescue_never_reports_confident_wrong():
+    # across a packetized grid, whenever the preamble rescue drove the decode (r.preamble set) and
+    # is confident (lock>=60), the bits must be right -- no wrong alias/mod slips past keep-best.
+    bad = 0
+    for mod in ("8psk", "16qam", "32qam", "64qam", "qpsk"):
+        for fc in (8e3, 1.6e4, -2.6e4, 4.5e4):
+            for sd in range(3):
+                x, tx = generate(GenParams(mod=mod, fs=FS, baud=1e5, fc=fc, snr=22,
+                                           n_symbols=350, seed=sd, preamble=(4, 10)))
+                r = analyze(x, M)
+                if r.preamble is not None and r.lock >= 60 and r.mod == mod:
+                    bad += ber(r.symbols, r.mod, tx) > 0.05
+    assert bad == 0
 
 
 def test_multipath_not_hijacked_by_preamble_rescue():

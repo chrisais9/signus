@@ -268,21 +268,26 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
         # alias); every PSK/QAM symmetry is tried -- the right (carrier, baud, sym) locks clean.
         ps = find_preamble(xb, meta.fs, baud_hint=baud)
         if ps is not None:
-            bauds = {round(meta.fs * L / ps.period) for L in (3, 4, 6, 8)}
+            # The Schmidl-Cox CFO is ambiguous modulo fs/P = baud/L: an M-PSK carrier off by baud/L
+            # rotates a whole constellation position per symbol, so the eye still looks locked but
+            # the bits are shifted -> a confident WRONG decode if the nearest alias is trusted. But
+            # there are exactly L such aliases across +-baud/2, so scan ALL (k in +-L/2) per baud
+            # candidate; the CORRECT alias gives the cleanest eye (highest lock) and keep-best wins.
             done = False
-            for k in (0, 1, -1, 2, -2):     # +-fs/P steps span a big carrier offset (up to baud/2)
-                data = dsp.mix(xb, meta.fs, ps.cfo_hz + k * meta.fs / ps.period)[ps.end:]
-                if data.size < 256:
-                    continue
-                for b2 in bauds:
+            for b2 in sorted({round(meta.fs * L / ps.period) for L in (3, 4, 6, 8)}):
+                nalias = max(1, round(b2 * ps.period / meta.fs))     # = L: aliases within +-baud/2
+                for k in range(-(nalias // 2), nalias // 2 + 1):
+                    cfo = ps.cfo_hz + k * meta.fs / ps.period
+                    data = dsp.mix(xb, meta.fs, cfo)[ps.end:]
+                    if data.size < 256:
+                        continue
                     for sm in (2, 4, 8):
                         t = _demod(data, meta.fs, float(b2), sm)
                         if t[5].lock > q.lock + _EQ_GAIN:
                             alpha, ym, raw, mod, syms, q = t
-                            fc = ps.cfo_hz + k * meta.fs / ps.period
-                            baud, symmetry, eq_applied, eq_mode = float(b2), sm, False, None
-                            pre = ps
-                            done = q.lock > 90       # a clean lock -> stop searching
+                            fc, baud, symmetry = cfo, float(b2), sm
+                            eq_applied, eq_mode, pre = False, None, ps
+                            done = q.lock > 95       # a pristine lock -> stop searching aliases
                         if done:
                             break
                     if done:
