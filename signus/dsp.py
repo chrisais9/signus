@@ -28,7 +28,9 @@ def _parab(ydb: np.ndarray, k: int) -> float:
         return 0.0
     a, b, c = ydb[k - 1], ydb[k], ydb[k + 1]
     d = a - 2 * b + c
-    return 0.5 * (a - c) / d if d != 0 else 0.0
+    # clamp to +-half a bin: a true peak's sub-bin offset cannot exceed that, but a near-flat
+    # (d~=0) or non-max triple can explode the ratio and drive baud negative -> a resample crash.
+    return float(np.clip(0.5 * (a - c) / d, -0.5, 0.5)) if d != 0 else 0.0
 
 
 def _kmeans1d(a: np.ndarray, k: int, iters: int = 50) -> tuple[np.ndarray, np.ndarray, float]:

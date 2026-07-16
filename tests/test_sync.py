@@ -118,6 +118,17 @@ def test_rescue_never_reports_confident_wrong():
     assert bad == 0
 
 
+@pytest.mark.parametrize("nsym,baud,preamble", [(160, 1.25e5, (6, 16)), (8, 1e5, (4, 4))])
+def test_short_packet_negative_baud_does_not_crash(nsym, baud, preamble):
+    # est_baud's sub-bin parabola could explode on a degenerate short-burst spectrum and return a
+    # NEGATIVE baud, which reached scipy resample_poly ('up and down must be >= 1'). The offset is
+    # now clamped to +-half a bin, so a bad estimate degrades (low lock), never crashes.
+    x, _ = generate(GenParams(mod="qpsk", fs=FS, baud=baud, snr=20, n_symbols=nsym,
+                              seed=0, preamble=preamble))
+    r = analyze(x, M)                              # must not raise a scipy ValueError
+    assert r.mod in ("bpsk", "qpsk", "8psk", "16qam", "32qam", "64qam")
+
+
 def test_multipath_not_hijacked_by_preamble_rescue():
     # a 1-symbol echo fakes a short periodicity; the eq rescue runs FIRST and lifts the lock, so
     # the preamble rescue is skipped and the bpsk multipath signal is not mis-driven.
