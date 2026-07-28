@@ -21,6 +21,9 @@ signus = "signus.cli:main"
 [tool.setuptools.packages.find]
 include = ["signus*"]
 
+[tool.setuptools.package-data]
+signus = ["web/*"]   # the served frontend: without this a pip install 404s the whole UI
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

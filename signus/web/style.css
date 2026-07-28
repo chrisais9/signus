@@ -2,7 +2,18 @@
   --bg: #f4f6f8; --card: #fff; --ink: #191f28; --sub: #6b7684;
   --blue: #3182F6; --blue-weak: #e8f1fe; --line: #eef1f4;
   --green: #12b886; --amber: #f59f00; --red: #fa5252;
+  --field: #fff; --hover: #f7fafd; --border: #dfe4ea;    /* theme-sensitive surfaces */
+  --ok-bg: #e6f7f1; --warn-bg: #fff4e0; --bad-bg: #ffecec;
   --radius: 20px; --shadow: 0 6px 24px rgba(30, 42, 66, .07);
+}
+/* dark mode: follows the OS. The signal canvases are already dark, so they blend in. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e131b; --card: #161d28; --ink: #e6ebf2; --sub: #94a1b2;
+    --blue-weak: #17273c; --line: #232c39; --field: #1b2330; --hover: #1d2632;
+    --border: #2b3543; --ok-bg: #102c24; --warn-bg: #302512; --bad-bg: #321b1e;
+    --shadow: 0 6px 24px rgba(0, 0, 0, .38);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -35,10 +46,10 @@ h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -.4px; }
 
 /* Dropzone */
 .drop {
-  text-align: center; cursor: pointer; border: 2px dashed #d3dae4;
+  text-align: center; cursor: pointer; border: 2px dashed var(--border);
   transition: border-color .18s, background .18s, transform .18s;
 }
-.drop:hover, .drop:focus-visible { border-color: var(--blue); background: #fbfdff; outline: none; }
+.drop:hover, .drop:focus-visible { border-color: var(--blue); background: var(--hover); outline: none; }
 .drop.drag { border-color: var(--blue); background: var(--blue-weak); transform: scale(1.01); }
 .drop-icon {
   width: 52px; height: 52px; margin: 6px auto 14px; border-radius: 16px;
@@ -58,8 +69,8 @@ code { background: var(--line); padding: 1px 6px; border-radius: 6px; font-size:
 .form-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .form-row label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--sub); }
 input, select {
-  font: inherit; padding: 10px 12px; border: 1px solid #dfe4ea; border-radius: 12px;
-  background: #fff; color: var(--ink);
+  font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--field); color: var(--ink);
 }
 input:focus, select:focus { outline: 2px solid var(--blue); border-color: transparent; }
 
@@ -83,7 +94,7 @@ input:focus, select:focus { outline: 2px solid var(--blue); border-color: transp
 /* Error */
 .error { display: flex; gap: 14px; align-items: center; border-left: 4px solid var(--red); }
 .err-mark {
-  width: 34px; height: 34px; flex: none; border-radius: 50%; background: #fff0f0;
+  width: 34px; height: 34px; flex: none; border-radius: 50%; background: var(--bad-bg);
   color: var(--red); font-weight: 800; display: grid; place-items: center;
 }
 .err-title { margin: 0; font-weight: 700; }
@@ -92,9 +103,9 @@ input:focus, select:focus { outline: 2px solid var(--blue); border-color: transp
 /* Summary + gauge */
 .summary-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .pill { padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; }
-.pill.ok { background: #e6f7f1; color: var(--green); }
-.pill.warn { background: #fff4e0; color: var(--amber); }
-.pill.bad { background: #ffecec; color: var(--red); }
+.pill.ok { background: var(--ok-bg); color: var(--green); }
+.pill.warn { background: var(--warn-bg); color: var(--amber); }
+.pill.bad { background: var(--bad-bg); color: var(--red); }
 .file-name { margin: 0; font-size: 13px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .summary-body { display: flex; align-items: center; gap: 24px; }
@@ -113,6 +124,8 @@ input:focus, select:focus { outline: 2px solid var(--blue); border-color: transp
 .metrics { display: flex; flex-direction: column; gap: 12px; }
 .metric { display: flex; flex-direction: column; gap: 2px; }
 .metric-label { font-size: 12px; color: var(--sub); }
+.tip { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--sub) 45%, transparent); }
 .metric-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* Card head with actions: spacing lives on the CONTAINER so the title and the
@@ -123,7 +136,7 @@ input:focus, select:focus { outline: 2px solid var(--blue); border-color: transp
 .btn.small { width: auto; margin-top: 0; padding: 8px 14px; font-size: 13px; border-radius: 10px; }
 .sel.small {
   font: inherit; font-size: 13px; font-weight: 600; padding: 7px 10px; border-radius: 10px;
-  border: 1px solid #dfe4ea; background: #fff; color: var(--ink);
+  border: 1px solid var(--border); background: var(--field); color: var(--ink);
 }
 .play-row { display: flex; gap: 8px; align-items: center; }
 .hint { margin: 8px 0 0; font-size: 12px; color: var(--sub); }
@@ -147,7 +160,7 @@ table.batch td { padding: 11px 10px; border-bottom: 1px solid var(--line);
   font-variant-numeric: tabular-nums; }
 table.batch .pill { padding: 3px 10px; font-size: 12px; }
 table.batch tbody tr { cursor: pointer; transition: background .12s; }
-table.batch tbody tr:hover { background: #f7fafd; }
+table.batch tbody tr:hover { background: var(--hover); }
 table.batch .fn { font-weight: 600; max-width: 210px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 
@@ -161,14 +174,14 @@ table.batch .fn { font-weight: 600; max-width: 210px; overflow: hidden;
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .chips:empty { display: none; }   /* no flags -> no ghost margin */
 .chip { font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px; }
-.chip.hit { background: #e6f7f1; color: var(--green); }
-.chip.miss { background: #ffecec; color: var(--red); }
-.chip.warn { background: #fff4e0; color: var(--amber); }
+.chip.hit { background: var(--ok-bg); color: var(--green); }
+.chip.miss { background: var(--bad-bg); color: var(--red); }
+.chip.warn { background: var(--warn-bg); color: var(--amber); }
 
 /* Burst selector (chips that act) */
 .chip-btn {
   font: inherit; font-size: 11px; font-weight: 700; padding: 4px 10px;
-  border-radius: 999px; border: 1px solid #dfe4ea; background: #fff;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--field);
   color: var(--sub); cursor: pointer; transition: color .12s, border-color .12s;
 }
 .chip-btn:hover { border-color: var(--blue); color: var(--blue); }
@@ -206,12 +219,12 @@ table.batch .fn { font-weight: 600; max-width: 210px; overflow: hidden;
 .box.bad .box-lbl { background: var(--red); }
 .box.gray { border-color: #8592a6; background: rgba(133, 146, 166, .15); }
 .box.gray .box-lbl { background: #8592a6; }
-.pill.gray { background: #eef1f4; color: var(--sub); }
+.pill.gray { background: var(--line); color: var(--sub); }
 table.batch .fc { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Non-digital emitter inline info */
 .survinfo {
-  background: #f7fafd; border-radius: 14px; padding: 14px 16px; margin: 12px 0;
+  background: var(--hover); border-radius: 14px; padding: 14px 16px; margin: 12px 0;
   border-left: 4px solid #8592a6; animation: rise .3s ease both;
 }
 .survinfo h3 { margin: 0 0 10px; font-size: 14px; }

@@ -149,7 +149,7 @@ signus/pipeline.py        단일 신호 파이프라인 + 광대역 서베이 �
 signus/gen.py             독립 신호 생성기 (수신기와 코드 미공유)
 signus/cli.py             analyze/gen/dataset/sweep/serve + BER 채점
 signus/server.py          stdlib 웹서버
-web/                      vanilla 프런트 (애니메이션 성상도 · 워터폴 · 배치, CDN 없음)
+signus/web/               vanilla 프런트 (애니메이션 성상도 · 워터폴 · 배치, CDN 없음)
 ```
 
 ## 로드맵

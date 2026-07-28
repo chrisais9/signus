@@ -110,14 +110,14 @@
             <circle id="donutArc" class="donut-arc" cx="60" cy="60" r="52"></circle>
           </svg>
           <div class="gauge-center"><span id="lockNum" class="gauge-num">0</span>
-            <span class="gauge-cap">LOCK</span></div>
+            <span class="gauge-cap tip" title="별자리가 얼마나 조밀·정렬됐는지 (0~100). 60 이상이면 복조 신뢰">LOCK</span></div>
         </div>
         <div class="metrics">
-          <div class="metric"><span class="metric-label">MER</span>
+          <div class="metric"><span class="metric-label tip" title="변조 오차비 — 높을수록 깨끗 (dB)">MER</span>
             <span id="merVal" class="metric-val">–</span></div>
-          <div class="metric"><span class="metric-label">EVM</span>
+          <div class="metric"><span class="metric-label tip" title="오차 벡터 크기 — 낮을수록 좋음 (%)">EVM</span>
             <span id="evmVal" class="metric-val">–</span></div>
-          <div class="metric"><span class="metric-label">SNR</span>
+          <div class="metric"><span class="metric-label tip" title="추정 심볼 신호 대 잡음비 (dB)">SNR</span>
             <span id="snrVal" class="metric-val">–</span></div>
         </div>
       </div>
@@ -162,6 +162,7 @@
     <div class="card downloads">
       <h2 class="card-title">다운로드</h2>
       <div class="dl-row">
+        <button id="copyBits" class="btn ghost">비트 복사</button>
         <button id="dlBits" class="btn ghost">비트 .txt</button>
         <button id="dlSyms" class="btn ghost">심볼 .csv</button>
         <button id="dlReport" class="btn ghost">리포트 .json</button>

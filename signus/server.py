@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from .pipeline import analyze, survey_web
 from .sigio import Meta, decode, parse_name
 
-_WEB = Path(__file__).resolve().parent.parent / "web"
+_WEB = Path(__file__).resolve().parent / "web"  # inside the package so wheels/sdists ship it
 _MIME = {".html": "text/html", ".css": "text/css", ".js": "text/javascript",
          ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml"}
 _MAX_BODY = 256 * 1024 * 1024

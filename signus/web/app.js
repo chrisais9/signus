@@ -167,19 +167,28 @@ async function analyze() {                     // burst re-selection within a si
 async function runBatch(data, metas) {
   hideAll();
   show($("loading"));
-  const truths = new Map(metas.map((m) => [m.name.replace(/\.json$/i, ""), m]));
+  const truths = new Map(metas.filter((m) => /\.json$/i.test(m.name))
+    .map((m) => [m.name.replace(/\.json$/i, ""), m]));
+  const sigmfs = new Map(metas.filter((m) => /\.sigmf-meta$/i.test(m.name))
+    .map((m) => [m.name.replace(/\.sigmf-meta$/i, ""), m]));
   const rows = [];
   for (let i = 0; i < data.length; i++) {
     const f = data[i];
     $("loadMsg").textContent = `일괄 분석 중… (${i + 1}/${data.length}) ${f.name}`;
-    const meta = parseName(f.name);
+    // same meta precedence as single-file mode: a .sigmf-meta sidecar (matched by stem)
+    // beats filename tokens
+    const sm = sigmfs.get(f.name.replace(/\.[^.]+$/, ""));
+    const meta = (sm && metaFromSigmf(await readJson(sm))) || parseName(f.name);
     let resp = null, err = null;
     try {
       if (!meta.fs || !meta.fmt) throw new Error("파일명에 fs/포맷 정보가 없어요");
       resp = await postTo(API, f, meta);
     } catch (e) { err = e.message; }
     const tf = truths.get(f.name);
-    rows.push({ file: f, resp, err, sidecar: tf ? await readJson(tf) : null });
+    // meta is stored per row: a later burst-chip re-analyze posts with THIS file's meta --
+    // it used to read state.meta, which a fresh batch never set (crash) and a previous
+    // single-file run left stale (silent wrong-fs decode)
+    rows.push({ file: f, meta, resp, err, sidecar: tf ? await readJson(tf) : null });
   }
   state.batch = rows;
   hideAll();
@@ -200,7 +209,7 @@ function renderBatch(rows) {
     tr.onclick = () => {
       const r = state.batch[+tr.dataset.i];
       if (!r.resp) return;
-      state.file = r.file; state.resp = r.resp; state.sidecar = r.sidecar;
+      state.file = r.file; state.meta = r.meta; state.resp = r.resp; state.sidecar = r.sidecar;
       state.burst = null; state.drilled = false; state.survey = null; state.overview = null;
       hideAll();
       render(r.resp);
@@ -636,6 +645,12 @@ function saveBlob(name, text, type) {
   URL.revokeObjectURL(url);
 }
 const stem = () => state.file.name.replace(/\.[^.]*$/, "");
+$("copyBits").onclick = async (e) => {   // decoded bitstream -> clipboard, with brief feedback
+  const btn = e.currentTarget, was = btn.textContent;
+  try { await navigator.clipboard.writeText(state.resp.bits); btn.textContent = "복사됨 ✓"; }
+  catch { btn.textContent = "복사 실패"; }
+  setTimeout(() => { btn.textContent = was; }, 1400);
+};
 $("dlBits").onclick = () => saveBlob(stem() + ".bits.txt", state.resp.bits, "text/plain");
 $("dlSyms").onclick = () => {
   const c = state.resp.constellation;

@@ -31,6 +31,22 @@ def test_ber_scorer_sanity():
     assert 0.3 < ber(zr, "qpsk", bits) < 0.7
 
 
+def test_web_assets_ship_inside_package():
+    # regression: web/ sat at the repo top level, outside [tool.setuptools.packages.find] --
+    # wheel and sdist omitted it entirely, so a pip-installed `signus serve` 404'd the whole UI
+    # while /api/analyze kept working (a silent partial break the source-checkout server test
+    # can never catch). The assets must live INSIDE the signus package, where setuptools
+    # package-data actually ships them and server._WEB resolves in an install.
+    from pathlib import Path
+
+    import signus
+    from signus.server import _WEB
+    pkg = Path(signus.__file__).resolve().parent
+    assert _WEB.resolve().is_relative_to(pkg), _WEB
+    for asset in ("index.html", "app.js", "style.css"):
+        assert (_WEB / asset).is_file(), asset
+
+
 def test_grid_has_core_regressions():
     labels = [label for label, core, _ in _grid("core", 1) if core]
     for want in ("cfo0", "dc", "pad", "real"):
