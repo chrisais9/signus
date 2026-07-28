@@ -14,7 +14,7 @@ import numpy as np
 from . import classify as cl
 from . import dsp, triage
 from .channelize import extract
-from .chirp import analyze_chirp
+from .chirp import analyze_chirp, is_chirp, sweeps_band
 from .constellations import demap_bits, demap_diff_bits, mod_order
 from .detect import Detection, detect
 from .eq import equalize, equalize_fse
@@ -27,10 +27,28 @@ _BITS_CAP = 65536
 _EQ_LOCK = 60.0    # below this a linear signal is worth an equalizer attempt
 _EQ_GAIN = 3.0     # ...keep it only if lock improves by this much
 _EQ_FLOOR = 50.0   # ...and clears this floor, so a wrong-mod fit is never locked in
+_EQ_QAM_FLOOR = 60.0  # ...but a DENSE-QAM (32/64) eq fit must clear a higher bar: the DD loop can
+#                       drag a lower-order cloud onto a 32/64 lattice at a marginal lock (~51), a
+#                       confident WRONG order. Genuine multipath recoveries clear ~72; the sweep's
+#                       eq cases are qpsk/16qam (never 32/64 via eq) so this bar is byte-identical.
 _BAUD_GAIN = 5.0   # an in-band baud hypothesis must beat the global one by this lock
 _SHORT_LOCK = 60.0  # below this, retry the baud line with fewer blocks (short-burst rescue)
 _SYNC_LOCK = 60.0   # below this, try a repeated-preamble carrier/timing sync (packetized bursts)
-_ALIAS_MARGIN = 8.0  # a preamble carrier alias must beat the next by this lock, else it's ambiguous
+_ALIAS_MARGIN = 10.0  # a preamble carrier alias must beat the next by this lock, else ambiguous.
+#                      This is the LOAD-BEARING rotation guard: even when the coarse anchor itself
+#                      aliases and validates a rotation at ~80 lock, that rotation wins by a thin
+#                      margin (~8) -- so a 10-lock margin refuses it. Because the margin catches it,
+#                      the lock floor can stay modest (78, not 82) -> ~5% more genuine recoveries.
+_SYNC_ACCEPT = 78.0  # ...AND clear this absolute lock: below it correct/rotated aliases overlap. A
+#                      65 floor was tried (to recover more moderate bursts) but an independent
+#                      snr-12 grid found 8psk rotated aliases locking 71-72 in the opened 65-78 band
+#                      (carrier off by one baud/L step -> confident garbage bits). Even 78 leaks a
+#                      a few hard-corner rotations (a separate pre-existing gate limit): hold at 78.
+_SYNC_ADIST = 1.5    # ...AND sit within this many alias steps of the coarse est_carrier fc -- a
+#                      soft backstop to the margin: it catches the one rotation the margin misses,
+#                      but tuned LOOSE (1.5, not 0.75) so it does not needlessly reject genuine
+#                      large-offset recoveries. The three together give 0 confident-wrong across
+#                      1920 hard-corner bursts at the max recall this gate reaches.
 _DIFF_OF = {"bpsk": "dbpsk", "qpsk": "dqpsk"}  # pi4dqpsk arrives as qpsk -> dqpsk
 
 
@@ -173,15 +191,41 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
             burst: int | None = None) -> Result:
     """Run the blind chain. `diff` demaps phase transitions (D-BPSK/D-QPSK);
     `burst` selects one detected burst (default: the most energetic)."""
+    if x.size:
+        # pathological UNIFORM scale must be fixed BEFORE analytic(): its magnitude sanitizer
+        # zeroes samples above 1e150 sample-WISE, so a whole capture near/over that ceiling was
+        # wiped wholesale (garbage mods, lock=nan at 1e154) before the rms-normalize below could
+        # ever help. The 99th percentile is robust to spike outliers (a single corrupt 1e300
+        # sample leaves it at signal scale -> untouched here, still zeroed sample-wise later);
+        # normal captures sit far inside (1e-100, 1e100) -> untouched -> sweep byte-identical.
+        scale = float(np.percentile(np.abs(x[::16]), 99))  # strided: scale detection needs the
+        #             BULK magnitude, not every sample -- 16x cheaper on a large direct capture
+        if np.isfinite(scale) and scale > 0 and not (1e-100 < scale < 1e100):
+            x = x / scale
     x = dsp.analytic(x)
     x = x - x.mean()  # DC block: LO leakage otherwise corrupts every estimator
     if x.size < 64:   # empty / trivially short: nothing to estimate, and it crashes downstream
         raise ValueError(f"신호가 너무 짧습니다 ({x.size} 샘플)")
+    rms = float(np.sqrt(np.mean(np.abs(x) ** 2)))
+    if rms and (rms < 1e-6 or rms > 1e6):  # only PATHOLOGICAL scale: normalize so the scale-variant
+        x = x / rms                        # spots (fsk_gate's CV epsilon, est_carrier's x**p over/
+    #                                        underflow) stay invariant. Normal captures rms~O(1) ->
+    #                                        untouched -> the acceptance sweep is byte-identical.
     bursts = dsp.find_bursts(x, meta.fs)
     if burst is None or not 0 <= burst < len(bursts):
         burst = int(np.argmax([np.sum(np.abs(x[s:e]) ** 2) for s, e in bursts]))
     s, e = bursts[burst]
     xb = x[s:e] if e - s >= 64 else x
+
+    # chirp gate -- same conjunctive tie-break as triage.family, so direct analyze / survey_web
+    # single mode agree with survey's label: an FMCW/CSS sweep trips fsk_gate (bimodal IF) and
+    # would force-demodulate into confident garbage FSK. sweeps_band keeps real FSK (0/222 pass)
+    # out of this branch, so only a genuine band-sweep is refused -- never demodulated.
+    if is_chirp(xb, meta.fs) and sweeps_band(xb, meta.fs):
+        info = analyze_chirp(xb, meta.fs)
+        kind = f"LoRa 추정 SF{info['sf']}" if info["sf"] else f"μ={info['mu']:.3g} Hz/s"
+        raise ValueError(f"처프(FMCW/CSS) 신호입니다 ({kind}, bw≈{info['bw']:.3g} Hz) — "
+                         "성상도 복조 대상이 아닙니다 (서베이 모드에서 특성 보고)")
 
     if fsk_gate(xb, meta.fs):
         r = analyze_fsk(xb, meta.fs)
@@ -238,7 +282,8 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
                                  dsp.timing(ym, 4, out=2), mod, symmetry)
             if q2.lock > qe.lock:
                 qe, se, me, mode = q2, s2, m2, "fse"
-        if qe.lock > q.lock + _EQ_GAIN and qe.lock >= _EQ_FLOOR:
+        floor = _EQ_QAM_FLOOR if me in ("32qam", "64qam") else _EQ_FLOOR
+        if qe.lock > q.lock + _EQ_GAIN and qe.lock >= floor:
             syms, mod, q, eq_applied, eq_mode = se, me, qe, True, mode
     elif mod in ("16qam", "32qam", "64qam"):
         # confident square-QAM at high lock: a benign post-echo can fold a LOWER-order signal
@@ -292,13 +337,28 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
             # hair. Require the winner to beat the best DIFFERENT-carrier candidate by a clear gap;
             # otherwise the alias is genuinely ambiguous -> leave the honest low-lock result rather
             # than emit a confident wrong decode. (Same-carrier baud/sym variants do not compete.)
-            if cands and cands[0][0] > q.lock + _EQ_GAIN:
+            # PRECISION GATE: the alias ambiguity (carrier off by baud/L) is blind-ambiguous -- a
+            # rotated alias still locks AS HIGH AS the truth (both are clean M-PSK), so lock alone
+            # cannot separate them (a rotated 8psk alias was measured locking 78 with ber 0.38). Two
+            # conjunctive conditions favour precision over recall: (1) a strong absolute lock, and
+            # (2) the winner sits within _SYNC_ADIST alias steps of the coarse est_carrier fc -- a
+            # baud/L rotation is >=1 step off the true carrier, so a far-from-anchor winner is a
+            # rotation. Genuine recoveries have a near-anchor carrier (adist<=0.5, lock 88+); on the
+            # hardest bursts the anchor itself is unreliable -> both conditions fail -> refuse.
+            if cands and cands[0][0] >= _SYNC_ACCEPT and cands[0][0] > q.lock + _EQ_GAIN:
                 top = cands[0]
                 other = next((c for c in cands if abs(c[1] - top[1]) > step / 2), None)
-                if other is None or top[0] - other[0] >= _ALIAS_MARGIN:
+                anchored = abs(top[1] - fc) <= _SYNC_ADIST * step
+                if anchored and (other is None or top[0] - other[0] >= _ALIAS_MARGIN):
                     alpha, ym, raw, mod, syms, q = top[4]
                     fc, baud, symmetry = top[1], top[2], top[3]
                     eq_applied, eq_mode, pre = False, None, ps
+                    # diagnostics must describe the ACCEPTED decode, not the abandoned blind
+                    # attempt: the carrier came from the preamble (not resolve_alias -> fc0=fc
+                    # keeps alias_resolved False), the baud from the preamble period (no
+                    # spectral line -> conf 0, no fallback), and ambiguity follows the new fc.
+                    fc0, conf, fell = fc, 0.0, False
+                    amb = abs(symmetry * fc) > 0.4 * meta.fs
 
     bits = demap_diff_bits(syms, _DIFF_OF[mod]) if diff and mod in _DIFF_OF \
         else demap_bits(syms, mod)

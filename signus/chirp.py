@@ -7,6 +7,7 @@ CFO/STO sync plus LoRa's reverse-engineered Gray/interleave/Hamming/whitening fr
 Calibrated on gen chirps vs every other family: chirp beat-PAR>=936, non-chirp<=264."""
 
 import numpy as np
+from scipy.ndimage import uniform_filter1d
 from scipy.signal import welch
 
 _PAR_MIN = 400.0   # delay-conjugate beat-tone peak-to-mean floor (chirp>=936, non-chirp<=264)
@@ -19,9 +20,9 @@ def _bw99(x: np.ndarray, fs: float) -> float:
     f, p = np.fft.fftshift(f), np.fft.fftshift(p)
     p = np.maximum(p - np.median(p), 0.0)    # remove the noise pedestal
     cs = np.cumsum(p) / (p.sum() + 1e-30)
-    lo = f[np.searchsorted(cs, 0.005)]
-    hi = f[min(np.searchsorted(cs, 0.995), f.size - 1)]
-    return float(abs(hi - lo))
+    lo = f[min(np.searchsorted(cs, 0.005), f.size - 1)]  # clamp BOTH edges: a degenerate PSD
+    hi = f[min(np.searchsorted(cs, 0.995), f.size - 1)]  # (all-zero after floor subtraction)
+    return float(abs(hi - lo))                           # otherwise indexes one past the end
 
 
 def _beat(x: np.ndarray, fs: float) -> tuple[float, float]:
@@ -56,19 +57,27 @@ def sweeps_band(x: np.ndarray, fs: float, bins: int = 40) -> bool:
     fsk_gate AND trips is_chirp's beat test, so triage needs this to tell a genuine band-sweep
     from FSK: a sweep's IF histogram is flat and fully occupied; FSK's spikes at its tones.
     Calibrated on extracted channels: 0/222 FSK/MSK (snr 8-40) pass, 214/216 FMCW + 60/60 LoRa
-    pass (misses only the narrowest, gentlest ramps -- which stay 'fsk', never a regression)."""
+    pass (misses only the narrowest, gentlest ramps -- which stay 'fsk', never a regression).
+    BOTH the raw and a lightly-smoothed IF must look like a sweep: at moderate SNR (~14) noise
+    flattens integer-h FSK's raw histogram to sweep-like pm ~1.44 (knife-edge), but smoothing
+    restores its tone spikes (pm 2.5+) while a genuine ramp stays flat (pm ~1.1) -- and at LOW
+    SNR smoothing can flatten FSK instead, which the raw view still catches. The conjunction
+    only ever narrows 'sweep', so every calibrated chirp above keeps its label (margin >=0.3)."""
     if x.size < 256:
         return False
     x = x - x.mean()
-    f = np.diff(np.unwrap(np.angle(x))) * fs / (2 * np.pi)
-    lo, hi = np.percentile(f, 1), np.percentile(f, 99)
-    if hi - lo < 1:
-        return False
-    f = f[(f >= lo) & (f <= hi)]
-    h = np.histogram(f, bins=bins)[0] / f.size
-    pm = h.max() / (h.mean() + 1e-30)               # discrete tones spike this; a sweep ~1
-    occ = float((h > 0.005).mean())                 # a sweep fills the band; tones occupy few bins
-    return bool(pm < _SWEEP_PM_MAX and occ >= _SWEEP_OCC_MIN)
+    f0 = np.diff(np.unwrap(np.angle(x))) * fs / (2 * np.pi)
+    for f in (f0, uniform_filter1d(f0, 4)):
+        lo, hi = np.percentile(f, 1), np.percentile(f, 99)
+        if hi - lo < 1:
+            return False
+        fv = f[(f >= lo) & (f <= hi)]
+        h = np.histogram(fv, bins=bins)[0] / fv.size
+        pm = h.max() / (h.mean() + 1e-30)           # discrete tones spike this; a sweep ~1
+        occ = float((h > 0.005).mean())             # a sweep fills the band; tones occupy few bins
+        if not (pm < _SWEEP_PM_MAX and occ >= _SWEEP_OCC_MIN):
+            return False
+    return True
 
 
 def analyze_chirp(x: np.ndarray, fs: float) -> dict:

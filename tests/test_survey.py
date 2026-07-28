@@ -312,6 +312,63 @@ def test_survey_fmcw_chirp_not_demodulated_as_fsk(bw, T):
     assert e.kind == "chirp" and e.result is None       # not 'fsk' with a confident garbage mod
 
 
+@pytest.mark.parametrize("pad,seed", [(0.25, 0), (0.4, 0), (0.6, 1)])
+def test_survey_bursty_integer_h_fsk_not_stolen_by_chirp(pad, seed):
+    # regression: the chirp feature stole decodable FSK. A bursty integer-h FSK channel keeps
+    # dead air after extraction, so envelope CV blows past fsk_gate's ceiling (fsk_gate=False);
+    # integer-h CPFSK beat tones then trip is_chirp (PAR >> floor), and the BARE chirp branch
+    # (no sweeps_band tie-break, unlike the fsk_gate branch above it) labeled the emitter
+    # 'chirp' -- never demodulated, sometimes with a spurious LoRa hypothesis. Pre-chirp-feature
+    # code decoded the identical capture as fsk2. With the tie-break the non-sweeping channel
+    # falls through to the demod, whose burst isolation recovers the clean FSK.
+    x, _ = generate(GenParams(mod="fsk2", fs=FS, baud=4e4, h=1.0, fc=2e5, snr=20,
+                              n_symbols=5000, pad=pad, seed=seed))
+    s = survey(x, Meta(FS, "iq", "f32", "le", False))
+    e = min(s.emitters, key=lambda e: abs(e.abs_fc - 2e5))
+    tag = (pad, seed, e.kind)
+    assert e.kind == "fsk" and e.result is not None, tag
+    assert abs(e.result.baud - 4e4) / 4e4 < 0.02, (tag, e.result.baud)
+
+
+@pytest.mark.parametrize("mod,fc,seed", [("fsk2", 3e4, 0), ("fsk4", 0.0, 0), ("fsk4", 3e4, 1)])
+def test_integer_h_fsk_at_moderate_snr_not_refused_as_chirp(mod, fc, seed):
+    # adversarial follow-up on the analyze() chirp gate: at h=2.0 / snr~14, noise flattens the RAW
+    # IF histogram of FSK to sweep-like pm ~1.44 (knife-edge on _SWEEP_PM_MAX) while the beat tones
+    # trip is_chirp -- the conjunctive gate then refused a signal the demod decodes at lock 100.
+    # SMOOTHING the IF restores the FSK tone spikes (pm 2.5+) while a genuine linear ramp stays
+    # flat (pm ~1.1), so sweeps_band must agree on BOTH views before calling it a band-sweep.
+    from signus.pipeline import analyze
+    x, _ = generate(GenParams(mod=mod, h=2.0, snr=14, fc=fc, baud=4e4,
+                              n_symbols=5000, fs=FS, seed=seed))
+    r = analyze(x, Meta(FS, "iq", "f32", "le", False))
+    tag = (mod, fc, seed, r.mod, round(r.lock), round(r.baud))
+    assert r.family == "fsk" and r.lock >= 60 and abs(r.baud - 4e4) / 4e4 < 0.02, tag
+
+
+def test_analyze_chirp_degenerate_input_no_crash():
+    # latent crash: _bw99's LO-edge searchsorted was unclamped (hi was clamped) -- a degenerate
+    # PSD (floor subtraction leaves all-zero power) indexed one past the end: raw IndexError
+    # instead of a harmless bw=0. survey()'s chirp branch calls analyze_chirp OUTSIDE the
+    # per-channel try/except, so this would have aborted a whole survey.
+    from signus.chirp import analyze_chirp
+    info = analyze_chirp(np.zeros(4096, complex), FS)
+    assert info["bw"] == 0.0 and info["sf"] is None
+
+
+@pytest.mark.parametrize("fc", [0.0, 3e4])
+def test_direct_analyze_rejects_chirp_not_confident_fsk(fc):
+    # regression: only survey's triage guarded against chirps -- direct analyze() (CLI, /api/
+    # analyze, and survey_web SINGLE mode for a one-emitter capture) had no chirp gate, so the
+    # same FMCW that survey labels 'chirp' was force-demodulated as fsk2 at lock 100: a confident
+    # wrong decode that contradicts survey's own label for the identical emitter.
+    from signus.pipeline import analyze, survey_web
+    x = _fmcw_saw(80e3, 2e-3, fc, 22, 0)
+    with pytest.raises(ValueError):
+        analyze(x, Meta(FS, "iq", "f32", "le", False))
+    with pytest.raises(ValueError):
+        survey_web(x, Meta(FS, "iq", "f32", "le", False))
+
+
 @pytest.mark.parametrize("sf", [7, 12])
 def test_survey_lora_sf7_sf12_not_stolen_by_fsk(sf):
     # LoRa SF7/SF12 extracted channels trip fsk_gate (unlike SF9); before the IF-sweep

@@ -66,12 +66,19 @@ def parse_sigmf(path: str) -> Meta | None:
         code = g["core:datatype"].replace("_le", "").replace("_be", "")
         dtype, fmt = _SIGMF[code]
         endian = "be" if g["core:datatype"].endswith("_be") else "le"
+        fs = float(g["core:sample_rate"])
+    except (OSError, KeyError, ValueError, TypeError, AttributeError):
+        return None  # MANDATORY fields malformed: fall back to filename tokens
+    try:
+        # rf centre is OPTIONAL: a malformed value must cost only this field, never the whole
+        # sidecar -- discarding valid fs/fmt/dtype here silently re-read the file with filename
+        # tokens, which can lie about fs (a quiet garbage decode).
         caps = doc.get("captures") or []
         rf = caps[0].get("core:frequency") if caps else None
-        return Meta(float(g["core:sample_rate"]), fmt, dtype, endian,
-                    rf_center=None if rf is None else float(rf))
-    except (OSError, KeyError, ValueError):
-        return None
+        rf = None if rf is None else float(rf)
+    except (KeyError, ValueError, TypeError, AttributeError, IndexError):
+        rf = None
+    return Meta(fs, fmt, dtype, endian, rf_center=rf)
 
 
 def make_name(label: str, m: Meta, ext: str) -> str:

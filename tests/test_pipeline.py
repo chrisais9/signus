@@ -86,6 +86,30 @@ def test_pure_noise_reports_no_lock():
     assert r.lock < 40  # honest failure, no exception
 
 
+@pytest.mark.parametrize("mod", ["bpsk", "qpsk", "8psk", "16qam"])
+@pytest.mark.parametrize("scale", [1e-20, 1e-13, 1e20, 1e30])
+def test_scale_invariant(mod, scale):
+    # regression: at a pathological amplitude the fsk_gate CV epsilon and est_carrier's x**p
+    # over/underflowed -> wrong mod/family (bpsk*1e-13 -> confident fsk2). analyze() normalizes an
+    # extreme-scale burst so every estimator is scale-invariant; a normal capture (rms~1) is kept.
+    x, _ = generate(GenParams(mod=mod, fs=1e6, baud=1e5, fc=8e3, snr=22, seed=0))
+    r = analyze(x * scale, Meta(1e6, "iq", "f32"))
+    assert r.family == "linear" and r.mod == mod, (mod, scale, r.family, r.mod)
+
+
+@pytest.mark.parametrize("fc", [0.008, 0.02, 0.03, 0.05])
+@pytest.mark.parametrize("seed", [1, 3, 17, 19])
+def test_32qam_not_confident_64qam(fc, seed):
+    # regression: 32qam's weak p=4 tone let est_carrier read symmetry 2 -> bpsk -> the eq rescue
+    # dragged the cloud onto a 64qam lattice at a marginal lock (~51) = confident WRONG order. A
+    # dense-QAM eq fit must clear a higher floor now, so a genuine 32qam is never mislabelled 64qam
+    # at lock >= 50 (it reports honest-low instead).
+    x, _ = generate(GenParams(mod="32qam", fs=1e6, baud=1e5, fc=fc * 1e6, snr=15,
+                              rolloff=0.35, n_symbols=5000, seed=seed))
+    r = analyze(x, Meta(1e6, "iq", "f32"))
+    assert not (r.lock >= 50 and r.mod == "64qam"), (fc, seed, r.mod, r.lock)
+
+
 def test_reader_negatives(tmp_path):
     f = tmp_path / "x_fs1000000_iq_i16.iq"
     f.write_bytes(b"")
@@ -228,3 +252,18 @@ def test_extreme_magnitude_and_empty_do_not_crash():
     assert analyze(xn, m).mod == "qpsk"
     with pytest.raises(ValueError):                   # empty -> clean rejection, not a crash
         analyze(np.zeros(0, complex), m)
+
+
+@pytest.mark.parametrize("scale", [1e150, 1e152, 1e154, 1e-140])
+def test_pathological_uniform_scale_still_decodes(scale):
+    # regression in the scale-normalize guard itself: it ran AFTER analytic()'s magnitude
+    # sanitizer, so a uniformly extreme capture (every sample near/over the 1e150 ceiling) had
+    # its samples zeroed WHOLESALE before any normalize could help -- analyze returned garbage
+    # mods and, at 1e154, a lock=nan / NaN-symbols Result. A robust (99th-percentile) rescale
+    # BEFORE the sanitizer keeps the whole range decodable; spike outliers (see the test above)
+    # leave the percentile untouched, so the sanitizer still handles them sample-wise.
+    m = Meta(1e6, "iq", "f32", "le")
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=4000, fs=1e6, baud=1e5, snr=25, seed=1))
+    r = analyze(x * scale, m)
+    assert r.mod == "qpsk" and r.lock >= 90, (scale, r.mod, r.lock)
+    assert not np.isnan(r.symbols).any()

@@ -20,7 +20,7 @@ from signus.constellations import (
     to_bits,
 )
 from signus.gen import GenParams, generate, save
-from signus.sigio import Meta, decode, make_name, parse_name, read, sidecar_read, write
+from signus.sigio import Meta, decode, make_name, parse_name, parse_sigmf, read, sidecar_read, write
 
 
 @pytest.mark.parametrize("mod", MODS)
@@ -61,6 +61,46 @@ def test_parse_baudline_aliases_endian_bitrev():
     assert m.endian == "be" and m.bitrev
     rt = parse_name(make_name("x", Meta(1e6, "iq", "u16", "be", True), "iq"))
     assert (rt.dtype, rt.endian, rt.bitrev) == ("u16", "be", True)
+
+
+@pytest.mark.parametrize("junk", [
+    "[1,2,3]",                                                    # JSON, but not an object
+    '{"global": "hello"}',                                        # 'global' not a dict
+    '{"global": {"core:datatype": "cf32_le", "core:sample_rate": null}}',  # null rate
+    '{"global": {"core:datatype": 42, "core:sample_rate": 1e6}}',  # datatype not a str
+    "not json at all",
+])
+def test_malformed_sigmf_falls_back_to_filename(tmp_path, junk):
+    # a junk .sigmf-meta beside a valid token-named file must NOT crash read(): parse_sigmf
+    # returns None (any malformed-but-parseable shape) and read() falls back to filename tokens.
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=300, snr=30, seed=1))
+    f = str(tmp_path / make_name("cap", Meta(1e6, "iq", "f32"), "iq"))
+    write(f, x, Meta(1e6, "iq", "f32"))
+    with open(os.path.splitext(f)[0] + ".sigmf-meta", "w") as fh:
+        fh.write(junk)
+    assert parse_sigmf(f) is None                 # malformed -> no Meta, no exception
+    y, m = read(f)                                # falls back to filename tokens
+    assert y.size > 0 and m.fs == 1e6 and m.dtype == "f32"
+
+
+@pytest.mark.parametrize("caps", [
+    '"captures": "x"',                                           # captures not a list
+    '"captures": [{"core:frequency": {"value": 433920000.0}}]',  # rf a dict, not a number
+    '"captures": [{"core:frequency": "junk"}]',                  # rf not parseable
+])
+def test_sigmf_malformed_optional_rf_keeps_mandatory_fields(tmp_path, caps):
+    # regression: the OPTIONAL core:frequency parse sat inside the same try as the mandatory
+    # fields, so ONE malformed rf value discarded the entire valid sidecar (fs/fmt/dtype) and the
+    # reader silently fell back to filename tokens -- which can LIE about fs (here they do) ->
+    # a quiet garbage decode. A malformed optional field must cost only that field.
+    x, _ = generate(GenParams(mod="qpsk", n_symbols=300, snr=30, seed=1))
+    f = str(tmp_path / "cap_fs2000000_iq_f32.iq")   # tokens deliberately CONTRADICT the sidecar
+    write(f, x, Meta(1e6, "iq", "i16"))
+    with open(os.path.splitext(f)[0] + ".sigmf-meta", "w") as fh:
+        fh.write('{"global": {"core:datatype": "ci16_le", "core:sample_rate": 1e6}, ' + caps + "}")
+    m = parse_sigmf(f)
+    assert m is not None and m.fs == 1e6 and m.dtype == "i16" and m.fmt == "iq", caps
+    assert m.rf_center is None
 
 
 @pytest.mark.parametrize("dtype", ["i8", "u8", "i16", "u16", "f32", "f64"])

@@ -52,6 +52,45 @@ def test_find_bursts_multiple_and_strongest():
     assert dsp.find_burst(x, 1e6) in bursts
 
 
+def test_find_bursts_keeps_short_packet_in_long_record():
+    # regression: the min-burst length scaled with the record (n//200), so a short packetized
+    # burst -- the preamble-sync feature's whole target -- was dropped from a long record and
+    # find_bursts fell back to [(0, n)]: analyze() then ran on a million noise samples and the
+    # packet was undecodable. The min length is now capped absolutely; the merge gap (which
+    # heals intra-signal splits and may stay proportional) is unchanged.
+    rng = np.random.default_rng(0)
+    n = 1_000_000
+    x = 0.05 * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    pkt, _ = generate(GenParams(mod="qpsk", n_symbols=100, preamble=(8, 8), snr=25, seed=1))
+    pkt = pkt / np.sqrt(np.mean(np.abs(pkt) ** 2))
+    mid = n // 2
+    x[mid:mid + pkt.size] += pkt
+    bursts = dsp.find_bursts(x, 1e6)
+    assert bursts != [(0, n)], "packet burst was dropped (whole-record fallback)"
+    s, e = max(bursts, key=lambda b: float(np.sum(np.abs(x[b[0]:b[1]]) ** 2)))
+    assert mid - 2000 <= s <= mid + 200 and mid + pkt.size - 200 <= e <= mid + pkt.size + 2000, \
+        (s, e, mid, pkt.size)
+
+
+def test_find_bursts_rejects_impulse_transient_in_long_record():
+    # regression from the mlen cap: capping the min burst length at 1024 let a SHORT high-energy
+    # transient (an impulse smeared by the n//1000 smoother into a ~win-wide run) qualify as a
+    # burst in a long record. Its total energy can exceed the real signal, so analyze()'s
+    # argmax-energy auto-selection picks the blip and returns garbage. The impulse is rejected by
+    # shape (its raw power is a single spike, unlike a modulated packet's flat envelope), so the
+    # genuine burst remains the strongest -- while a real short packet (test above) still survives.
+    rng = np.random.default_rng(0)
+    n = 4_000_000
+    x = 0.05 * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    sig, _ = generate(GenParams(mod="qpsk", n_symbols=30000, snr=25, seed=1))
+    sig = sig / np.sqrt(np.mean(np.abs(sig) ** 2))
+    x[1_500_000:1_500_000 + sig.size] += sig
+    x[3_000_000] += 6000 + 6000j                       # one huge impulse sample
+    s, e = max(dsp.find_bursts(x, 2e6), key=lambda b: float(np.sum(np.abs(x[b[0]:b[1]]) ** 2)))
+    assert s >= 1_450_000 and e <= 1_500_000 + sig.size + 50_000, (s, e)   # the genuine burst
+    assert not (s <= 3_000_000 < e), (s, e)            # NOT the impulse
+
+
 def test_resolve_alias_deep_wrap_and_identity():
     # 4*fc = 1.3*(fs/2): the 4th-power tone wraps, and the wrapped estimate lands
     # back inside the "unambiguous" zone, so no flag can catch it -- resolve always

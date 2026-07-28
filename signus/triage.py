@@ -25,9 +25,25 @@ def _carrier_par(x: np.ndarray, powers: tuple[int, ...] = (1, 2, 4, 8)) -> float
     return best
 
 
+def _active(x: np.ndarray) -> np.ndarray:
+    """Trim leading/trailing dead air (envelope below half the top-quartile median). A bursty
+    channel's dead air corrupts BOTH triage discriminators -- it inflates the envelope CV past
+    fsk_gate's ceiling AND pollutes sweeps_band's IF histogram -- so every gate below must see
+    the emitter, not the silence around it. A continuous channel is returned unchanged."""
+    env = np.abs(x)
+    top = env[env > np.percentile(env, 75)]
+    if top.size == 0:
+        return x
+    on = np.flatnonzero(env > 0.5 * np.median(top))
+    if on.size < 256:
+        return x
+    return x[on[0]:on[-1] + 1]
+
+
 def family(x: np.ndarray, fs: float) -> str:
     """One of 'fsk' | 'chirp' | 'linear' | 'analog' | 'tone'. 'linear'/'fsk' go to the
     demod; 'chirp'/'analog'/'tone' are reported as-is (never force-fit to a constellation)."""
+    x = _active(x)
     if fsk_gate(x, fs):
         # a linear FMCW chirp / CSS (LoRa) trips fsk_gate too -- its swept IF reads bimodal to
         # the gate -- and would then be force-demodulated into confident garbage FSK symbols.
@@ -36,8 +52,14 @@ def family(x: np.ndarray, fs: float) -> str:
         if is_chirp(x, fs) and sweeps_band(x, fs):
             return "chirp"
         return "fsk"
-    if is_chirp(x, fs):            # linear chirp / CSS (LoRa) -- constant-envelope, would
-        return "chirp"            # otherwise fall through to 'analog' (no M-power tone)
+    if is_chirp(x, fs) and sweeps_band(x, fs):
+        # linear chirp / CSS (LoRa) -- constant-envelope, would otherwise fall through to
+        # 'analog' (no M-power tone). The tie-break is REQUIRED here too: a bursty integer-h
+        # FSK channel (dead air inflates envelope CV past fsk_gate) also trips is_chirp via
+        # its CPFSK beat tones -- without sweeps_band it was labeled 'chirp' and never
+        # demodulated. A non-sweeping channel falls through, and the demod's burst isolation
+        # recovers the FSK.
+        return "chirp"
     a = np.abs(x)
     if a.std() / (a.mean() + 1e-12) < _CV_CE:            # constant envelope, not FSK
         return "tone" if _carrier_par(x) >= _TONE_PAR else "analog"

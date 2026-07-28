@@ -88,6 +88,121 @@ def test_demod(mod, h, snr):
         assert ber <= limit, (tag, ber)
 
 
+@pytest.mark.parametrize("mod,baud,h", [("fsk2", 2e4, 0.35), ("fsk2", 2e4, 0.7),
+                                        ("msk", 2e4, 0.5), ("fsk4", 2e4, 0.7),
+                                        ("fsk2", 5e4, 0.7)])
+@pytest.mark.parametrize("fc", [0.0, 5e4, 1e5])       # carrier offset: the missed corner
+def test_oversampled_fsk_not_confident_wrong(mod, baud, h, fc):
+    # regression: at fs/baud >= 20 the discriminator's symbol-rate line is buried under broadband
+    # transition artifacts, so _est_baud locked a spurious peak (baud ~25% off) while the clean
+    # tones still clustered -> a confident (lock ~94) WRONG decode. A decimated baud re-estimate
+    # pins the true rate; at a carrier OFFSET the discriminator is recentred first (else the
+    # baseband LPF and harmonic fold corrupt it). Decode right, or reject to linear -- never wrong.
+    from signus.pipeline import analyze
+    from signus.sigio import Meta
+    for seed in range(3):
+        x, tx = generate(GenParams(mod=mod, fs=1e6, baud=baud, h=h, snr=25, fc=fc,
+                                   n_symbols=3000, seed=seed))
+        r = analyze(x, Meta(1e6, "iq", "f32", "le", False))
+        tag = (mod, baud, h, fc, seed, r.mod, round(r.lock), round(r.baud))
+        if r.family != "fsk":
+            continue                       # an honest reject to linear is acceptable
+        assert abs(r.baud - baud) / baud < 0.02, tag
+        ber = _ber(r.bits, tx, mod_order(r.mod).bit_length() - 1)
+        assert not (r.lock >= 60 and ber > 0.1), tag  # correct rate never gives a confident-wrong
+
+
+@pytest.mark.parametrize("h,nsym,seed", [(0.5, 320, 0), (0.35, 210, 3), (0.35, 400, 2)])
+def test_midlength_fsk_true_baud_not_doubled(h, nsym, seed):
+    # regression: the harmonic-comb fold guard summed out-of-range harmonics onto the LAST spectrum
+    # bin (index clamp), multi-counting the Nyquist bin -- that inflated _hp(k) at the 2*baud peak
+    # and vetoed the legitimate 2*baud -> baud fold. A mid-length burst (nsym 200-500, prominence
+    # above the weak-line gate) then decoded at TWICE the true baud with lock ~80: confident-wrong.
+    # In-range harmonics only: the fold fires and the true baud wins again.
+    from signus.pipeline import analyze
+    from signus.sigio import Meta
+    x, tx = generate(GenParams(mod="fsk2", fs=1e6, baud=1e5, h=h, snr=20,
+                               n_symbols=nsym, seed=seed))
+    r = analyze(x, Meta(1e6, "iq", "f32", "le", False))
+    tag = (h, nsym, seed, r.mod, round(r.baud), round(r.lock))
+    assert r.family == "fsk", tag
+    assert abs(r.baud - 1e5) / 1e5 < 0.02, tag
+    ber = _ber(r.bits, tx, mod_order(r.mod).bit_length() - 1)
+    assert not (r.lock >= 60 and ber > 0.1), (tag, ber)
+
+
+@pytest.mark.parametrize("h,fc,seed", [(0.35, 1e5, 8), (0.35, 8e3, 8), (0.5, 5e4, 1)])
+def test_low_h_baud_no_halfrate_fold(h, fc, seed):
+    # regression: at low modulation index / low SNR the true symbol-rate line stays strongest but
+    # spurious energy at baud/2 used to clear the fold gate -> baud folded to baud/2, a confident
+    # WRONG decode (lock ~100, baud 50% off). The harmonic-comb guard rejects that fold.
+    from signus.pipeline import analyze
+    from signus.sigio import Meta
+    x, tx = generate(GenParams(mod="fsk2", fs=1e6, baud=1e5, h=h, snr=15, fc=fc,
+                               n_symbols=3000, seed=seed))
+    r = analyze(x, Meta(1e6, "iq", "f32", "le", False))
+    if r.family != "fsk":
+        return
+    assert abs(r.baud - 1e5) / 1e5 < 0.02, (h, fc, seed, r.baud)   # not folded to baud/2
+
+
+@pytest.mark.parametrize("mod,h,nsym,snr,fc,seed", [
+    ("fsk2", 0.5, 150, 12, 8e3, 10),   # half-rate fold: baud 24% off at lock 61
+    ("msk", 0.5, 150, 14, 0.0, 14),    # msk baud 32% off at lock 65
+    ("msk", 0.5, 170, 14, 0.0, 12),    # msk baud 11% off at lock 63
+])
+def test_midband_fsk_weak_line_never_confident_wrong(mod, h, nsym, snr, fc, seed):
+    # A lowered weak-line floor (nsym<100) let these 100-199-symbol bursts through: a weak
+    # symbol-rate line (prominence ~3) still clusters a HALF-RATE baud fold tight enough to
+    # lock >=60, so they decoded confident-wrong (baud 11-32% off). The internal symbol count
+    # sits at 100-160 (a fold halves it from the true count), disproving the "confident-wrong =>
+    # internal nsym <= 49" premise: the count floor must stay high enough to reject a weak line
+    # here. Either a clean ValueError or a correct baud -- never a confident wrong one.
+    from signus.pipeline import analyze
+    from signus.sigio import Meta
+    x, _ = generate(GenParams(mod=mod, fs=1e6, baud=1e5, h=h, snr=snr, fc=fc,
+                              n_symbols=nsym, seed=seed))
+    try:
+        r = analyze(x, Meta(1e6, "iq", "f32", "le", False))
+    except ValueError:
+        return                                     # clean reject of an unreliable weak line
+    if r.family != "fsk":
+        return
+    assert not (r.lock >= 60 and abs(r.baud - 1e5) / 1e5 > 0.02), \
+        (mod, h, nsym, snr, fc, seed, round(r.baud), round(r.lock))
+
+
+@pytest.mark.parametrize("nsym", [12, 20, 40, 64, 100])
+def test_short_fsk_burst_never_confident_wrong_baud(nsym):
+    # a short FSK burst has too few transitions for a reliable symbol-rate line, so any baud it
+    # produces is a spurious peak that still clusters tight (few points -> lock ~100) = confident
+    # WRONG. The prominence/symbol-count guard rejects a weak line, so no short burst decodes
+    # with a wrong baud (it either decodes correctly or raises a clean ValueError).
+    from signus.pipeline import analyze
+    from signus.sigio import Meta
+    M = Meta(1e6, "iq", "f32", "le", False)
+    for mod in ("fsk2", "fsk4", "msk"):
+        for fc in (0, 8e3, 5e4):
+            for seed in range(4):
+                x, _ = generate(GenParams(mod=mod, fs=1e6, baud=1e5, fc=fc, snr=18,
+                                          n_symbols=nsym, seed=seed))
+                try:
+                    r = analyze(x, M)
+                except ValueError:
+                    continue                   # clean reject of an unreliable burst
+                if r.family == "fsk":
+                    assert not (r.lock >= 60 and abs(r.baud - 1e5) / 1e5 > 0.02), \
+                        (mod, fc, seed, nsym, r.baud, r.lock)
+
+
+def test_bw99_degenerate_burst_no_crash():
+    # latent crash: the LO-edge searchsorted was unclamped (hi was clamped) -- an all-zero /
+    # denormal-power burst made the floor-subtracted PSD sum to zero and indexed one past the
+    # end (raw IndexError where the caller expects a bandwidth).
+    from signus.fsk import _bw99
+    assert _bw99(np.zeros(4096, complex), 1e6) == 0.0
+
+
 @pytest.mark.parametrize("mod,h", [("fsk2", 1.0), ("fsk4", 0.7), ("msk", 0.5)])
 def test_demod_cfo(mod, h):
     """A large carrier offset is absorbed by recentering on mean(f)."""

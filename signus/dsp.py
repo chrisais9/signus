@@ -57,12 +57,19 @@ def _kmeans1d(a: np.ndarray, k: int, iters: int = 50) -> tuple[np.ndarray, np.nd
 
 # --- burst detection -------------------------------------------------------
 
+_SPIKE_PAR = 60.0  # raw peak-to-mean power above which a candidate run is an impulse smear, not a
+#                    burst. Modulated bursts sit low: constant-envelope FSK ~1, RRC-shaped PSK/QAM
+#                    peaks ~6-12, high-order QAM tails to ~20; a single-sample impulse smeared over
+#                    a ~win-wide run scores ~win (hundreds+). 60 clears every real mod with margin.
+
+
 def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
     """Dual-threshold energy detector with an Otsu log-power floor; return every
     merged burst in time order, or [(0, size)] when nothing stands out."""
     n = x.size
     win = max(64, n // 1000)
-    ps = uniform_filter1d(np.abs(x) ** 2, win)
+    pw = np.abs(x) ** 2
+    ps = uniform_filter1d(pw, win)
     lp = np.log10(ps + 1e-20)
 
     # Otsu split of the log-power histogram: a floor that survives an 80%-full
@@ -91,15 +98,31 @@ def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
     if not runs:
         return [(0, n)]
 
-    gap = mlen = max(256, n // 200)
+    gap = max(256, n // 200)            # merge gap heals intra-signal splits: proportional is fine
+    mlen = max(256, min(n // 200, 1024))  # ...but the MIN burst length must not scale with the
+    # record: a short packetized burst (preamble-sync target, ~1k samples) in a long capture was
+    # dropped by n//200 and the [(0,n)] fallback buried it in noise. 1024 keeps the blip filter
+    # for records up to ~200k while capping it where the packet population starts.
     merged = [list(runs[0])]
     for s, e in runs[1:]:
         if s - merged[-1][1] < gap:
             merged[-1][1] = e
         else:
             merged.append([s, e])
-    merged = [(int(s), int(e)) for s, e in merged if e - s >= mlen]
-    return merged or [(0, n)]
+    # The mlen cap alone lets a short high-energy transient survive in a long record: the smoother
+    # spreads a single impulse into a ~win-wide run that clears 1024, and its energy can outrank
+    # the real signal so analyze() auto-selects the blip. A modulated burst has a near-flat
+    # envelope (raw peak/mean power ~ a few); an impulse smear is one spike over noise (ratio ~win).
+    # Reject runs whose RAW power is spike-dominated -- this separates them by shape, at any length.
+    out = []
+    for s, e in merged:
+        if e - s < mlen:
+            continue
+        seg = pw[s:e]
+        if float(seg.max() / (seg.mean() + 1e-30)) > _SPIKE_PAR:
+            continue
+        out.append((int(s), int(e)))
+    return out or [(0, n)]
 
 
 def find_burst(x: np.ndarray, fs: float) -> tuple[int, int]:

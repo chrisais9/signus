@@ -108,6 +108,24 @@ def test_large_carrier_offset_alias_resolved(baud, fc, preamble):
         assert not (r.lock >= 60 and ber(r.symbols, "8psk", tx) > 0.2), "confident rotated alias"
 
 
+@pytest.mark.parametrize("fc,seed", [(1.15e5, 14), (1.4e5, 14), (2.0e5, 14)])
+def test_lowsnr_8psk_rotated_alias_refused(fc, seed):
+    # a 65 lock floor was tried (to recover more moderate bursts) but an independent snr-12 grid
+    # found 8psk (8,10) rotated aliases that lock 71-72 -- exactly the 65-78 band the lowering
+    # opened. A rotated alias keeps the right constellation but the carrier is off by one baud/L
+    # step (adist ~1.0), so every symbol rotates one position: confident garbage bits. The floor
+    # stays at 78 (precision over recall); these must NOT produce a confident preamble decode.
+    x, tx = generate(GenParams(mod="8psk", fs=FS, baud=1e5, fc=fc, snr=12,
+                               n_symbols=100, seed=seed, preamble=(8, 10)))
+    r = analyze(x, M)
+    if r.preamble is None:
+        return                                         # refused outright: correct
+    step = FS / r.preamble.period
+    adist = abs(r.fc - fc) / step                      # rotated alias sits ~1 full step off truth
+    assert not (r.lock >= 60 and (r.mod != "8psk" or adist > 0.4)), \
+        (fc, seed, r.mod, round(r.lock, 1), round(adist, 2))
+
+
 def test_rescue_never_reports_rotation_garbage():
     # a confidently-accepted alias that is off by baud/L gives ber ~0.44 (a whole-constellation
     # rotation). Across a broad packetized grid incl. large carrier offsets, no confident (lock>=60)
@@ -126,6 +144,22 @@ def test_rescue_never_reports_rotation_garbage():
     assert bad == 0
 
 
+def test_rescued_decode_diagnostics_consistent():
+    # regression: the rescue replaced fc/baud/symmetry but left the PRE-rescue diagnostics in
+    # the Result -- alias_resolved compared the preamble-derived carrier against the pre-rescue
+    # fc0 (spuriously True on every rescued decode), baud_conf reported the spectral-line
+    # strength of a baud that was DISCARDED, and baud_fallback/carrier_ambiguous described the
+    # abandoned blind attempt. Diagnostics must describe the decode actually returned.
+    x, _ = generate(GenParams(mod="8psk", fs=FS, baud=1e5, fc=8e3, snr=20,
+                              n_symbols=300, seed=1, preamble=(4, 12)))
+    r = analyze(x, M)
+    assert r.preamble is not None, "fixture must engage the rescue"
+    assert not r.alias_resolved            # resolve_alias did not drive this carrier
+    assert not r.baud_fallback             # nor did the fewer-blocks baud retry
+    assert r.baud_conf == 0.0              # no spectral line backs the preamble-derived baud
+    assert r.carrier_ambiguous == (abs(r.symmetry * r.fc) > 0.4 * FS)
+
+
 @pytest.mark.parametrize("nsym,baud,preamble", [(160, 1.25e5, (6, 16)), (8, 1e5, (4, 4))])
 def test_short_packet_negative_baud_does_not_crash(nsym, baud, preamble):
     # est_baud's sub-bin parabola could explode on a degenerate short-burst spectrum and return a
@@ -135,6 +169,25 @@ def test_short_packet_negative_baud_does_not_crash(nsym, baud, preamble):
                               seed=0, preamble=preamble))
     r = analyze(x, M)                              # must not raise a scipy ValueError
     assert r.mod in ("bpsk", "qpsk", "8psk", "16qam", "32qam", "64qam")
+
+
+@pytest.mark.parametrize("mod,baud,nsym,snr,fc,seed,pre", [
+    ("16qam", 1e5, 120, 20, 1.4e5, 2, (4, 12)),  # true carrier flukes to 64qam -> rotation wins
+    ("8psk", 1e5, 100, 12, 2.9e5, 1, (8, 10)),   # adjacent alias won by a hair over the old margin
+    ("16qam", 1e5, 80, 16, 1.15e5, 5, (4, 12)),
+    ("8psk", 5e4, 100, 16, 3e4, 1, (8, 8)),      # coarse ANCHOR itself aliases -> validates rot.
+])
+def test_preamble_hard_corner_refuses_rotated_alias(mod, baud, nsym, snr, fc, seed, pre):
+    # short + low-SNR + large-offset packetized bursts: the carrier alias (off by baud/L) is
+    # blind-ambiguous -- a rotated alias still locks (~55-80) with garbage bits (ber ~0.44), and
+    # lock/margin/anchor-distance all overlap correct vs wrong (the coarse anchor can itself alias).
+    # The absolute lock floor (_SYNC_ACCEPT) + margin (_ALIAS_MARGIN) + anchor distance refuse
+    # them (precision over recall), so the honest low-lock blind result stands -- no confident
+    # wrong preamble decode. Before these gates, all four decoded as confident rotation garbage.
+    x, tx = generate(GenParams(mod=mod, fs=FS, baud=baud, fc=fc, snr=snr,
+                               n_symbols=nsym, seed=seed, preamble=pre))
+    r = analyze(x, M)
+    assert r.preamble is None, (mod, fc, r.lock, r.mod)  # refused, not a confident rotated alias
 
 
 def test_multipath_not_hijacked_by_preamble_rescue():
