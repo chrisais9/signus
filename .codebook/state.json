@@ -1,0 +1,28 @@
+{
+ "date": "2026-07-27",
+ "head": "c6a9bc6+수정중",
+ "files": {
+  "pyproject.toml": "013df8d70066",
+  "signus/__init__.py": "29c12d294e8a",
+  "signus/sigio.py": "e3be43c08200",
+  "signus/constellations.py": "b35bfa4b0cfa",
+  "signus/gen.py": "b1fa8de8145d",
+  "signus/spectrum.py": "6d95b24788ed",
+  "signus/detect.py": "c297098bb8e7",
+  "signus/channelize.py": "d6e1b69292ae",
+  "signus/triage.py": "ef339a6ab59a",
+  "signus/dsp.py": "b2efff9e161a",
+  "signus/eq.py": "895ecc7f93fa",
+  "signus/sync.py": "c7afb999f39b",
+  "signus/classify.py": "eef7b4ae620c",
+  "signus/_accel.py": "2b87c70fc639",
+  "signus/fsk.py": "da7cbec6ffef",
+  "signus/chirp.py": "9887b84f4081",
+  "signus/pipeline.py": "9694de6ea8c5",
+  "signus/cli.py": "cdb1d23b5512",
+  "signus/server.py": "02f259b5acc5",
+  "signus/web/index.html": "eab4171963bd",
+  "signus/web/style.css": "c1dff10b538b",
+  "signus/web/app.js": "6bcbeb088df8"
+ }
+}

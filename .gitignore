@@ -8,3 +8,5 @@ samples/
 .playwright-mcp/
 *.png
 .DS_Store
+# PDF 중간 산출물만 무시. state.json/baseline 은 "어디까지 필사했나"라서 추적한다
+.codebook/*.html
