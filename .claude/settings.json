@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/tools/session-sync.sh pull",
+            "timeout": 30,
+            "statusMessage": "origin 에서 최신본 받아오는 중…"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/tools/session-sync.sh push",
+            "timeout": 60,
+            "statusMessage": "남은 변경 커밋·푸시 중…"
+          }
+        ]
+      }
+    ]
+  }
+}

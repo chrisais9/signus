@@ -21,6 +21,7 @@ import difflib
 import hashlib
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -38,7 +39,11 @@ DOCS = ROOT / "docs"
 STATE_DIR = ROOT / ".codebook"
 BASE_DIR = STATE_DIR / "baseline"
 STATE_JSON = STATE_DIR / "state.json"
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_CANDS = (  # PDF 를 그리는 헤드리스 브라우저. 맥에서 뽑든 리눅스 보드에서
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",  # 뽑든 같은
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",            # 명령이 돌아야 한다
+    "google-chrome-stable", "google-chrome", "chromium-browser", "chromium",
+)
 
 # ── 레이아웃 (A4 210x297mm, 8.5pt Menlo, 실측 용량 101칸) ──────────────────────
 LINES_PER_PAGE = 60
@@ -636,11 +641,21 @@ def snap() -> None:
 
 
 # ── PDF 출력 ──────────────────────────────────────────────────────────────────
+def find_chrome() -> str:
+    """헤드리스 브라우저 실행 파일. CHROME 환경변수가 최우선 — 후보에 없는 곳에 깔린 보드에서도
+    `CHROME=/usr/bin/chromium python tools/codebook.py all` 로 그대로 발급된다."""
+    for cand in (os.environ.get("CHROME"), *CHROME_CANDS):
+        if cand and (found := shutil.which(cand)):
+            return found
+    raise SystemExit("헤드리스 크롬을 찾지 못했습니다 — chromium 을 설치하거나"
+                     "(apt install chromium) CHROME 환경변수로 실행 파일 경로를 주세요")
+
+
 def to_pdf(html_text: str, out: Path) -> None:
     tmp = STATE_DIR / (out.stem + ".html")
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(html_text, encoding="utf-8")
-    subprocess.run([CHROME, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+    subprocess.run([find_chrome(), "--headless", "--disable-gpu", "--no-pdf-header-footer",
                     "--run-all-compositor-stages-before-draw",
                     "--virtual-time-budget=20000",
                     f"--print-to-pdf={out}", tmp.as_uri()], check=True, capture_output=True)
