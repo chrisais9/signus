@@ -28,7 +28,7 @@ for sc in "$file.json" "${file%.*}.sigmf-meta"; do   # 정답 사이드카는 <�
     [ -f "$sc" ] && echo "사이드카 $(basename "$sc") 있음 (분석기는 안 읽음 · 비교 표시용)"
 done                                                # SigMF 는 <확장자뺀이름>.sigmf-meta
 echo "명령   signus $cmd $file${*:+ $*}"
-echo "리비전 $rev   (지문은 signus selfcheck)"
+echo "리비전 $rev"
 echo "환경   $(uname -sr) · $("$PY" -c 'import sys,numpy,scipy;
 print(f"py{sys.version_info.major}.{sys.version_info.minor} numpy{numpy.__version__} scipy{scipy.__version__}")')"
 

@@ -34,10 +34,6 @@ from pygments import lex
 from pygments.lexers import CssLexer, HtmlLexer, JavascriptLexer, PythonLexer, TOMLLexer
 from pygments.token import Token
 
-# 지문은 signus 본체가 계산한다 -- 정의가 두 벌이 되면 종이와 화면이 조용히 어긋난다.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from signus.cli import fingerprints, fold  # noqa: E402
-
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 STATE_DIR = ROOT / ".codebook"
@@ -268,7 +264,6 @@ def build_codebook() -> str:
             page_no += 1
 
     total_lines = sum(t[3] for t in toc)
-    fps = dict(fingerprints())          # 필사한 뒤 `signus selfcheck` 와 대조하는 값
     rows_html, last_sec = [], None
     for sec, rel, desc, nlines, start in toc:
         if sec != last_sec:
@@ -279,7 +274,6 @@ def build_codebook() -> str:
             f'<span class="tf">{html.escape(rel)}</span>'
             f'<span class="td">{html.escape(desc)}</span>'
             f'<span class="tn">{nlines}줄</span>'
-            f'<span class="tfp">{fps.get(rel, "")}</span>'
             f'<span class="tp">{start}쪽</span></div>')
 
     cover = f"""<section class="page cover">
@@ -290,10 +284,7 @@ def build_codebook() -> str:
     &#160;·&#160; {git_head()}</div>
   <div class="cnote">한 줄이 {WRAP_COLS}칸을 넘으면 왼쪽 줄번호 자리에
     <span class="mono">{CONT_MARK}</span> 표시가 붙고 아랫줄로 이어집니다 — 원래는 한 줄이니
-    붙여서 입력하세요. 세로 점선은 들여쓰기 4칸 눈금입니다.<br>
-    다 옮긴 뒤 <span class="mono">signus selfcheck</span> 를 돌려 마지막 줄이
-    <span class="mono">{fold(fingerprints())}</span> 인지 보세요. 다르면 목차 오른쪽 지문과
-    화면을 대조해 틀린 파일을 찾습니다.</div>
+    붙여서 입력하세요. 세로 점선은 들여쓰기 4칸 눈금입니다.</div>
   <div class="toc">{''.join(rows_html)}</div>
 </section>"""
     return SHELL.replace("%%TITLE%%", "signus 필사용 코드북") \
@@ -575,7 +566,7 @@ SHELL = """<!doctype html>
   .toc { margin-top: 10pt; }
   .tsec { font-family: "Apple SD Gothic Neo", sans-serif; font-size: 9pt;
           font-weight: 700; margin: 9pt 0 3pt; }
-  .trow { display: grid; grid-template-columns: 12pt 130pt 1fr 34pt 42pt 30pt;
+  .trow { display: grid; grid-template-columns: 12pt 130pt 1fr 34pt 30pt;
           align-items: baseline; font-size: 8pt; line-height: 14pt;
           border-bottom: 0.3pt dotted #ddd; }
   .drow { display: grid; grid-template-columns: 12pt 1fr 34pt 40pt 40pt 62pt 30pt;
@@ -587,8 +578,6 @@ SHELL = """<!doctype html>
   .tn, .tp { font-family: "Apple SD Gothic Neo", sans-serif; text-align: right;
              color: #666; font-variant-numeric: tabular-nums; }
   .tp { font-weight: 700; color: #111; }
-  .tfp { font-family: Menlo, monospace; font-size: 7.2pt; color: #888;
-         text-align: right; }   /* 필사 지문: signus selfcheck 화면과 대조 */
   .dadd { text-align: right; color: #0a6b2d; font-weight: 700;
           font-variant-numeric: tabular-nums; }
   .ddel { text-align: right; color: #961a1a; font-weight: 700;

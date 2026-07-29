@@ -1,7 +1,6 @@
 """CLI, BER scorer, and the stdlib server."""
 
 import json
-import pathlib
 import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -155,85 +154,37 @@ def test_server_analyze_and_static(server):
     assert ei.value.code == 400 and "error" in json.load(ei.value)
 
 
-# --- 손으로 옮기는 한 줄 / 필사 지문 --------------------------------------------
-# 이 장비 코드도 결과도 사람 손을 거친다. 여기 잠그는 건 전부 "조용히 틀린 채 통과"한
-# 사고들이다 -- 검출기가 오타를 놓치면 잘못된 값 위에서 실신호 수사가 시작된다.
+# --- 손으로 옮기는 한 줄 ------------------------------------------------------
+# 결과는 사람이 화면을 보고 받아쳐서 나온다. 여기 잠그는 건 "조용히 틀린 채 통과"한
+# 사고다 -- 검출기가 오타를 놓치면 잘못된 값 위에서 실신호 수사가 시작된다.
 
 def test_check_code_catches_shifted_space_that_moves_a_digit():
     # 회귀: 공백을 전부 지우고 crc 를 걸던 판에서 'fs1000000 16qam' 과 'fs10000001 6qam'
     # (샘플레이트가 10배!) 이 같은 코드를 받아 "일치 ✓" 로 통과했다. 값이 바뀌는 오타
     # 32종이 이 경로로 샜다. 공백은 한 칸으로 '줄이되' 없애지 않는다.
     from signus.cli import check_code
-    good = "sig2 fp0 an fs1000000 16qam fc8000 bd100000 lk100"
-    bad = "sig2 fp0 an fs10000001 6qam fc8000 bd100000 lk100"
+    good = "sig2 an fs1000000 16qam fc8000 bd100000 lk100"
+    bad = "sig2 an fs10000001 6qam fc8000 bd100000 lk100"
     assert check_code(good) != check_code(bad)
 
 
 @pytest.mark.parametrize("typo", [
-    "sig2 fp0 an fs1000000 16qam fc8000 bd10000 lk100",    # 자릿수 누락
-    "sig2 fp0 an fs1000000 16qam fc8000 bd100001 lk100",   # 한 자리 치환
-    "sig2 fp0 an fs1000000 16qam fc-8000 bd100000 lk100",  # 부호
-    "sig2 fp0 an fs1000000 16qam fc8000 bd100000 lk10",    # 끝자리 누락
+    "sig2 an fs1000000 16qam fc8000 bd10000 lk100",    # 자릿수 누락
+    "sig2 an fs1000000 16qam fc8000 bd100001 lk100",   # 한 자리 치환
+    "sig2 an fs1000000 16qam fc-8000 bd100000 lk100",  # 부호
+    "sig2 an fs1000000 16qam fc8000 bd100000 lk10",    # 끝자리 누락
 ])
 def test_check_code_catches_common_hand_copy_typos(typo):
     from signus.cli import check_code
-    assert check_code("sig2 fp0 an fs1000000 16qam fc8000 bd100000 lk100") != check_code(typo)
+    assert check_code("sig2 an fs1000000 16qam fc8000 bd100000 lk100") != check_code(typo)
 
 
 def test_check_code_ignores_layout_only_differences():
     # 사람이 줄을 어떻게 띄우고 대소문자를 어떻게 쓰든 통과해야 한다 -- 헛경보가 잦으면
     # 진짜 불일치를 무시하게 된다. 잡아야 하는 건 오직 값이다.
     from signus.cli import check_code
-    base = "sig2 fp0 an fs1000000 16qam fc8000"
-    assert check_code(base) == check_code("  SIG2   fp0\tan  fs1000000 16QAM fc8000  ")
-
-
-def test_selftest_constant_matches_its_own_function():
-    # _SELFTEST 는 check_code 를 잘못 필사했는지 잡는 상수다. 코드를 고치면서 상수를 안
-    # 고치면 그 장비가 멀쩡한데도 "틀림 — 다시 필사" 를 보고, 반대면 검출기가 죽은 채 통과한다.
-    from signus.cli import _SELFTEST, check_code
-    assert check_code("sig2 x an fs1 qpsk") == _SELFTEST
-
-
-def test_fingerprint_targets_match_the_printed_codebook_exactly():
-    # 지문 대상과 인쇄 대상이 어긋나면 지문은 "필사한 코드가 맞나"에 답하지 못한다.
-    # (인쇄되지 않은 파일이 지문에 들어가면 그 장비는 영원히 불일치가 뜬다.)
-    import sys
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))
-    import codebook
-
-    from signus.cli import fingerprints
-    assert sorted(r for r, _ in fingerprints()) == sorted(rel for _, rel, _ in codebook.FILES)
-
-
-def test_paper_fingerprint_sees_what_the_paper_shows(tmp_path):
-    from signus.cli import _paper_text
-    src = "def f():\n    x = 1  # 설명\n    return x\n"
-    base = _paper_text(_w(tmp_path, "a.py", src))
-    # 종이에 보이는 것 -> 잡아야 한다
-    for name, mutated in [
-        ("주석", src.replace("# 설명", "# 설명!")),
-        ("빈 줄", src.replace("def f():\n", "def f():\n\n")),
-        ("들여쓰기 폭", src.replace("    x = 1", "   x = 1")),
-        ("토큰 사이 공백", src.replace("x = 1", "x  = 1")),
-        ("값", src.replace("x = 1", "x = 2")),
-    ]:
-        assert _paper_text(_w(tmp_path, "m.py", mutated)) != base, name
-    # 종이에 안 보이는 것 -> 눈감아야 한다 (사람이 맞출 수 없는 차이로 헛경보를 내면 안 된다)
-    for name, same in [
-        ("줄끝 공백", src.replace("    return x", "    return x   ")),
-        ("파일 끝 빈 줄", src + "\n\n"),
-        ("탭 들여쓰기", src.replace("    ", "\t")),
-        ("CRLF", src.replace("\n", "\r\n")),
-        ("BOM", "﻿" + src),
-    ]:
-        assert _paper_text(_w(tmp_path, "s.py", same)) == base, name
-
-
-def _w(d, name, text):
-    p = d / name
-    p.write_text(text, encoding="utf-8")
-    return p
+    base = "sig2 an fs1000000 16qam fc8000"
+    assert check_code(base) == check_code("  SIG2\tan  fs1000000   16QAM fc8000  ")
 
 
 def test_brief_line_round_trips_through_its_own_check_code():
@@ -243,7 +194,7 @@ def test_brief_line_round_trips_through_its_own_check_code():
                         "alias_resolved": False, "baud_fallback": False,
                         "carrier_ambiguous": False},
            "quality": {"lock": 100.0, "mer_db": 29.8}, "eq": {"applied": False}}
-    line = brief(doc, "an", "fpabc123")
+    line = brief(doc, "an")
     body, _, code = line.rpartition(" #")
     assert check_code(body) == code
     assert "iq-i16" in body        # dtype 은 lock 0 진단의 1순위 용의자라 반드시 실린다
