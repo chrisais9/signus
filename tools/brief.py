@@ -1,74 +1,36 @@
 #!/usr/bin/env python3
-"""손으로 쳐서 옮기는 결과 요약 — 한 줄 + 오타 검출 코드.
+"""받아친 한 줄을 검증한다 (맥 쪽 전용).
 
-격리망 장비에서 클립보드 없이 결과를 옮겨야 한다. 그래서 필사용 코드북과 같은 원칙:
-짧게, 헷갈리는 글자를 쓰지 않고, 틀리면 티가 나게.
+발행은 격리망 장비가 한다: `signus analyze <파일> --brief`. 발행기·검출기·지문 계산은 전부
+`signus/cli.py` 안에 있고 — 그래야 인쇄물을 통해 그 장비로 흘러간다 — 여기서는 그걸 그대로
+import 한다. 두 벌로 나눠 두면 한쪽만 고쳐졌을 때 오타가 0인데도 "불일치"가 뜬다.
 
-    tools/brief.py emit <리포트.json> <an|sv> <리비전>   # 요약 한 줄 발행
-    tools/brief.py check                                 # 받아친 줄을 stdin 으로 검증
-
-검출 코드 `#xxxx` 는 나머지 글자 전부의 crc32 다. 한 글자만 틀려도 안 맞으므로,
-받아친 쪽에서 `check` 를 돌리면 "숫자 하나 잘못 봤다"를 바로 잡아낸다. 공백과 대소문자는
-계산에서 빼므로 줄바꿈·간격이 달라지는 건 통과시킨다 (진짜 위험한 건 숫자다).
+    echo "sig2 fp… an fs… …" | tools/brief.py check
 """
 from __future__ import annotations
 
-import json
+import os
 import re
 import sys
-from zlib import crc32
+from pathlib import Path
 
-# 0/O, 1/l/I 처럼 손글씨·화면에서 헷갈리는 글자를 뺀 32자 (Crockford base32 계열)
-_ALPHA = "0123456789abcdefghjkmnpqrstvwxyz"
-_FLAGS = [("eq", lambda d: d["eq"]["applied"]),          # 등화기
-          ("al", lambda d: d["detected"]["alias_resolved"]),      # 반송파 앨리어스 보정
-          ("fb", lambda d: d["detected"]["baud_fallback"]),       # 심볼레이트 폴백
-          ("amb", lambda d: d["detected"]["carrier_ambiguous"]),  # 앨리어싱 경고
-          ("pre", lambda d: "preamble" in d["detected"])]         # 프리앰블 동기
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))          # editable 설치 여부와 무관하게 저장소 코드를 쓴다
 
-
-def check_code(text: str) -> str:
-    """공백·대소문자·기존 검출코드를 뺀 나머지의 crc32 → 4글자."""
-    body = re.sub(r"#[0-9a-z]{4}\b", "", text.lower())
-    body = re.sub(r"\s+", "", body)
-    n = crc32(body.encode()) & 0xFFFFF          # 20비트 → 4글자
-    return "".join(_ALPHA[(n >> s) & 31] for s in (15, 10, 5, 0))
-
-
-def _num(v: float, digits: int = 0) -> str:
-    return f"{v:.{digits}f}"
-
-
-def emit(doc: dict, mode: str, rev: str) -> str:
-    head = f"sig1 {rev} {mode}"
-    if mode == "sv":
-        lines = [f"{head} fs{_num(doc['fs'])} n{doc['n_emitters']}"]
-        for i, e in enumerate(doc["emitters"][:12]):
-            what = e.get("mod") or e["kind"]
-            baud = f" bd{_num(e['baud'])}" if e.get("baud") else ""
-            lock = f" lk{_num(e['lock'])}" if e.get("lock") is not None else ""
-            lines.append(f"{i} fc{_num(e['abs_fc'])}{baud}{lock} {what}")
-        if len(doc["emitters"]) > 12:
-            lines.append(f"...{len(doc['emitters']) - 12}개 생략")
-    else:
-        d, q = doc["detected"], doc["quality"]
-        parts = [head, f"fs{_num(doc['fs'])}", d["mod"], f"fc{_num(d['fc'])}",
-                 f"bd{_num(d['baud'])}", f"lk{_num(q['lock'])}"]
-        if q.get("mer_db") is not None:
-            parts.append(f"mer{_num(q['mer_db'], 1)}")
-        if d.get("h") is not None:                       # FSK 는 롤오프 대신 변조지수
-            parts.append(f"h{_num(d['h'], 2)}")
-        elif d.get("rolloff") is not None:
-            parts.append(f"rl{_num(d['rolloff'], 2)}")
-        if len(doc.get("bursts", [])) > 1:
-            parts.append(f"b{doc['burst_idx'] + 1}/{len(doc['bursts'])}")
-        parts += [f for f, get in _FLAGS if get(doc)]
-        lines = [" ".join(parts)]
-    body = "\n".join(lines)
-    return f"{body} #{check_code(body)}"
+try:
+    from signus.cli import check_code
+except ModuleNotFoundError:             # 시스템 파이썬엔 numpy 가 없다 -> venv 로 다시 실행
+    _py = _ROOT / ".venv/bin/python"
+    if _py.exists() and sys.executable != str(_py):
+        os.execv(str(_py), [str(_py), *sys.argv])
+    raise
 
 
 def check(text: str) -> int:
+    if re.search(r"\bsig1\b", text.lower()):    # 옛 형식: 공백을 전부 지워 계산하던 판이라
+        print("sig1 은 옛 형식입니다 — 그 장비 코드를 새 인쇄본으로 맞춘 뒤 다시 뽑아주세요.")
+        print("(sig1 은 공백이 한 칸 밀린 오타를 못 잡았습니다. 값이 맞는지 보장할 수 없습니다.)")
+        return 2
     m = re.search(r"#([0-9a-z]{4})\b", text.lower())
     if not m:
         print("검출 코드(#xxxx)가 없습니다 — 줄 끝을 빠뜨리셨나요?")
@@ -77,22 +39,21 @@ def check(text: str) -> int:
     if want == got:
         print(f"일치 ✓  (#{want})")
         return 0
+    # 코드 네 글자 자체를 잘못 옮겼을 수도 있다. 알파벳에 없는 o/i/l 을 0/1/1 로 되읽어 보고,
+    # 해밍거리가 1이면 본문이 아니라 코드 쪽 오타일 공산이 크다(우도 약 7900:1).
+    alt = want.translate(str.maketrans("oil", "011"))
+    if alt == got:
+        print(f"일치 ✓  (#{got} — 받은 코드의 o/i/l 을 0/1/1 로 읽었습니다)")
+        return 0
+    near = sum(a != b for a, b in zip(want, got, strict=True)) == 1
     print(f"불일치 ✗  받은 코드 #{want}, 내용으로 계산하면 #{got}")
-    print("→ 한 글자가 다릅니다. 숫자의 자릿수부터, 그다음 검출 코드 네 글자를 다시 봐주세요.")
+    print("→ 검출 코드 네 글자를 먼저 다시 봐주세요." if near
+          else "→ 숫자의 자릿수부터 다시 봐주세요 (검출 코드 자체의 오타는 아닌 듯합니다).")
     return 1
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) >= 2 and argv[1] == "check":
-        return check(sys.stdin.read())
-    if len(argv) == 5 and argv[1] == "emit":
-        with open(argv[2]) as fh:
-            print(emit(json.load(fh), argv[3], argv[4]))
-        return 0
-    print(__doc__.strip().splitlines()[2], file=sys.stderr)
-    print("사용법: brief.py emit <json> <an|sv> <rev> | brief.py check", file=sys.stderr)
-    return 2
-
-
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    if len(sys.argv) >= 2 and sys.argv[1] == "check":
+        sys.exit(check(sys.stdin.read()))
+    print("사용법: brief.py check   (받아친 줄을 stdin 으로)", file=sys.stderr)
+    sys.exit(2)

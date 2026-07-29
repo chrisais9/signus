@@ -5,6 +5,13 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 samples/
+# 실신호 캡처는 절대 원격으로 나가지 않는다. 세션 끝 훅이 git add -A 를 하고 origin 은
+# 공개 저장소라, 확장자와 디렉터리 양쪽으로 막는다 (훅에도 1MB 크기 제동이 따로 있다).
+caps/
+*.iq
+*.pcm
+*.dat
+*.sigmf-data
 .playwright-mcp/
 *.png
 .DS_Store

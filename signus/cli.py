@@ -1,7 +1,10 @@
 """CLI: analyze FILE / gen / sweep (acceptance harness) / serve."""
 
 import argparse
+import re
 import sys
+from pathlib import Path
+from zlib import crc32
 
 import numpy as np
 
@@ -24,6 +27,96 @@ _DTYPE_CHOICES = ("i8", "u8", "i16", "u16", "f32", "f64")
 
 _SNR = {"bpsk": 14, "qpsk": 14, "8psk": 18, "16qam": 22, "64qam": 28}
 _SNR_LOW = {"bpsk": 6, "qpsk": 8, "8psk": 12, "16qam": 16, "64qam": 22}
+
+
+# --- 손으로 옮기는 한 줄 · 필사 지문 -------------------------------------------
+# 실신호 장비는 인터넷도 클립보드도 없다. 결과는 사람이 화면을 보고 받아쳐서 나오고, 코드는
+# 인쇄물을 보고 쳐서 들어간다. 그래서 이 블록은 반드시 여기(필사 대상)에 있어야 한다 --
+# tools/ 에 두면 그 도구부터 필사해야 하는 본말전도가 된다.
+
+_ALPHA = "0123456789abcdefghjkmnpqrstvwxyz"  # 0/o, 1/l/i 처럼 화면에서 헷갈리는 글자를 뺀 32자
+_SELFTEST = "psmx"       # check_code("sig2 x an fs1 qpsk") 의 정답. 이게 틀리면 아래 함수를
+#                          잘못 필사한 것이다 -- 검출기 자신부터 검증한다.
+_PAPER = ("pyproject.toml", "signus/*.py", "signus/web/*")  # == 코드북 대상 = 필사하는 파일
+_BRIEF_FLAGS = [("eq", lambda d: d["eq"]["applied"]),
+                ("al", lambda d: d["detected"]["alias_resolved"]),
+                ("fb", lambda d: d["detected"]["baud_fallback"]),
+                ("amb", lambda d: d["detected"]["carrier_ambiguous"]),
+                ("pre", lambda d: "preamble" in d["detected"])]
+
+
+def _b32(n: int, k: int) -> str:
+    return "".join(_ALPHA[(n >> (5 * i)) & 31] for i in reversed(range(k)))
+
+
+def check_code(text: str) -> str:
+    """받아친 줄의 오타 검출 코드 (4글자 = 20비트). 공백은 '한 칸으로 줄이되 없애지는'
+    않는다 -- 전부 지우면 'fs1000000 16qam' 과 'fs10000001 6qam'(샘플레이트 10배!) 이 같은
+    코드가 되어, 값이 바뀌는 오타 32종이 조용히 통과했다. 대소문자와 줄 간격은 계속 무시한다."""
+    body = re.sub(r"#[0-9a-z]{4}\b", "", text.lower())
+    return _b32(crc32(re.sub(r"\s+", " ", body).strip().encode()), 4)
+
+
+def _paper_text(p: Path) -> str:
+    """종이에 실리는 글자만 남긴다. 탭->4칸, 줄끝 공백/마지막 빈 줄/BOM 제거 -- 이 넷은
+    인쇄물에 보이지 않아 사람이 맞출 수 없다. 반대로 주석·빈 줄·들여쓰기 폭은 종이에
+    보이므로 그대로 둔다(=지문이 잡는다)."""
+    t = p.read_text(encoding="utf-8").lstrip("\ufeff").replace("\t", " " * 4)
+    return "\n".join(ln.rstrip() for ln in t.split("\n")).rstrip("\n")
+
+
+def fingerprints() -> list[tuple[str, str]]:
+    """필사 대상 파일별 지문. 이 장비 코드가 인쇄물과 같은지 확인할 유일한 수단이다 --
+    상수 한 글자가 틀려도 파이썬은 조용히 돌고, 그 위에서 실신호 수사가 시작된다."""
+    root = Path(__file__).resolve().parent.parent
+    files = sorted({q for pat in _PAPER for q in root.glob(pat) if q.is_file()})
+    return [(q.relative_to(root).as_posix(), _b32(crc32(_paper_text(q).encode()), 6))
+            for q in files]
+
+
+def fold(fps: list[tuple[str, str]]) -> str:
+    """파일별 지문을 접은 한 값. 정의: 경로순 '<상대경로> <지문>\\n' 을 이어붙인 crc32."""
+    return "fp" + _b32(crc32("".join(f"{r} {c}\n" for r, c in fps).encode()), 6)
+
+
+def brief(doc: dict, mode: str, rev: str) -> str:
+    """손으로 옮기는 한 줄 + 검출 코드. Result.to_json() 딕셔너리에서 만든다 -- 객체
+    속성을 직접 포맷하면 to_json 이 이미 한 반올림과 두 번 겹쳐 장비와 맥이 갈린다."""
+    head = f"sig2 {rev} {mode} fs{doc['fs']:.0f} {doc['fmt']}-{doc['dtype']}"
+    if mode == "sv":
+        lines = [f"{head} n{doc['n_emitters']}"]
+        for i, e in enumerate(doc["emitters"][:12]):
+            baud = f" bd{e['baud']:.0f}" if e.get("baud") else ""
+            lock = f" lk{e['lock']:.0f}" if e.get("lock") is not None else ""
+            lines.append(f"{i} fc{e['abs_fc']:.0f}{baud}{lock} {e.get('mod') or e['kind']}")
+        if len(doc["emitters"]) > 12:
+            lines.append(f"...{len(doc['emitters']) - 12}개 생략")
+    else:
+        d, q = doc["detected"], doc["quality"]
+        p = [head, d["mod"], f"fc{d['fc']:.0f}", f"bd{d['baud']:.0f}", f"lk{q['lock']:.0f}"]
+        if q["mer_db"] is not None:
+            p.append(f"mer{q['mer_db']:.1f}")
+        if d.get("h") is not None:                  # FSK 는 롤오프 대신 변조지수
+            p.append(f"h{d['h']:.2f}")
+        elif d["rolloff"] is not None:
+            p.append(f"rl{d['rolloff']:.2f}")
+        if len(doc["bursts"]) > 1:
+            p.append(f"b{doc['burst_idx'] + 1}/{len(doc['bursts'])}")
+        p += [f for f, get in _BRIEF_FLAGS if get(doc)]
+        lines = [" ".join(p)]
+    body = "\n".join(lines)
+    return f"{body} #{check_code(body)}"
+
+
+def _selfcheck() -> int:
+    """`signus selfcheck` -- 마지막 한 줄만 받아쳐 인쇄물 표지와 대조한다. 다를 때만
+    위의 파일별 지문을 눈으로 훑어 틀린 파일 이름을 찾는다."""
+    fps = fingerprints()
+    for rel, code in fps:
+        print(f"{code}  {rel}")
+    ok = check_code("sig2 x an fs1 qpsk") == _SELFTEST
+    print(f"{fold(fps)}  파일 {len(fps)}개 · 검출코드 {'정상' if ok else '틀림 — 다시 필사'}")
+    return 0 if ok else 1
 
 
 # --- BER scoring (blind reception leaves rotation/conjugation/offset ambiguity) --
@@ -203,7 +296,8 @@ def _analyze(args: argparse.Namespace) -> int:
     r = analyze_file(args.file, args.fs, args.fmt, args.dtype,
                      "be" if args.be else None, args.bitrev or None, args.diff,
                      None if args.burst is None else args.burst - 1, rf=args.rf)
-    d = r.to_json()["detected"]
+    j = r.to_json(views=False)          # 한 줄 요약도 여기서 만든다 (반올림이 한 번만 걸리게)
+    d = j["detected"]
     truth = (sidecar_read(args.file) or {}).get("truth")  # display only, never detection
     if len(r.bursts) > 1:
         print(f"버스트 {len(r.bursts)}개 감지 — {r.burst_idx + 1}번째 분석 (--burst N 으로 선택)")
@@ -233,6 +327,8 @@ def _analyze(args: argparse.Namespace) -> int:
         r.save_bits(args.save_bits, args.packed)
     if args.report:
         r.save_report(args.report)
+    if args.brief:                      # 사람용 출력을 대체하지 않고 맨 끝에 한 줄 더 --
+        print(brief(j, "an", fold(fingerprints())))   # 조기 return 이면 위 저장들이 조용히 무시된다
     return 0
 
 
@@ -268,6 +364,8 @@ def _survey(args: argparse.Namespace) -> int:
         import json
         with open(args.report, "w") as fh:
             json.dump(s.to_json(), fh, indent=1)
+    if args.brief:
+        print(brief(s.to_json(), "sv", fold(fingerprints())))
     return 0
 
 
@@ -328,6 +426,8 @@ def _read_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--be", action="store_true", help="big-endian 샘플")
     p.add_argument("--bitrev", action="store_true", help="바이트 내 비트 역순")
     p.add_argument("--rf", type=float, help="RF 중심주파수 (Hz) — 실제 주파수로 보고")
+    p.add_argument("--brief", action="store_true",
+                   help="손으로 옮길 한 줄 + 오타 검출 코드를 끝에 덧붙임")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -386,7 +486,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
 
+    sub.add_parser("selfcheck", help="필사 지문 — 이 코드가 인쇄물과 같은지 대조")
+
     args = ap.parse_args(argv)
+    if args.cmd == "selfcheck":
+        return _selfcheck()
     if args.cmd == "analyze":
         return _analyze(args)
     if args.cmd == "survey":

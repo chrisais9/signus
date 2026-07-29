@@ -101,7 +101,9 @@ class Result:
             det["preamble"] = {"period": p.period, "cfo_hz": round(p.cfo_hz, 1),
                                "conf": round(p.conf, 2), "start": p.start, "end": p.end}
         doc = {
-            "fs": self.meta.fs, "fmt": self.meta.fmt, "rf_center": self.meta.rf_center,
+            "fs": self.meta.fs, "fmt": self.meta.fmt, "dtype": self.meta.dtype,  # dtype 은 한 줄
+            "rf_center": self.meta.rf_center,          # 보고에 필수: lock 0 의 1순위 용의자다
+
             "family": self.family, "n_samples": int(self.iq_corr.size),
             "burst": {"start": self.burst[0], "end": self.burst[1]},
             "bursts": [{"start": s, "end": e} for s, e in self.bursts],
@@ -428,7 +430,7 @@ class Survey:
     emitters: list[Emitter] = field(default_factory=list)
 
     def to_json(self) -> dict:
-        return {"fs": self.meta.fs, "fmt": self.meta.fmt,
+        return {"fs": self.meta.fs, "fmt": self.meta.fmt, "dtype": self.meta.dtype,
                 "n_emitters": len(self.emitters),
                 "emitters": [e.to_json() for e in self.emitters]}
 

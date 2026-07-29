@@ -40,6 +40,14 @@ pull)
 push)
     if [ -n "$(git status --porcelain)" ]; then
         git add -A || say "git add 실패 — 커밋하지 못했습니다"
+        # 크기 제동: origin 은 공개 저장소다. 실신호 캡처는 .gitignore 로도 막지만 확장자를
+        # 못 맞힌 것이 있을 수 있으니, 큰 파일이 딸려 들어가면 자동 커밋을 아예 멈추고 알린다.
+        # 사람이 의도해서 올리는 큰 파일(인쇄물 PDF)은 그 턴에 직접 커밋하므로 여기 안 걸린다.
+        big=$(git diff --cached --name-only | while IFS= read -r f; do
+                  [ -f "$f" ] && [ "$(wc -c <"$f")" -gt 1048576 ] && echo "$f"
+              done)
+        [ -n "$big" ] && { git reset --quiet
+            say "1MB 넘는 파일이 있어 자동 커밋을 멈췄습니다 (캡처 유출 방지): $(echo "$big" | tr '\n' ' ')"; }
         git commit --quiet -m "chore(wip): 세션 자동 커밋 ($(hostname -s), $(date '+%Y-%m-%d %H:%M'))" \
                    -m "세션 끝에 남아 있던 변경. 검증 안 된 진행 중 상태일 수 있습니다." \
             || say "커밋 실패 — 원격에 올리지 못했습니다"
