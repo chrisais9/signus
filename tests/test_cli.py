@@ -58,7 +58,7 @@ def test_cli_gen_and_analyze(tmp_path, capsys):
     assert main(["gen", "--mod", "8psk", "--cfo", "8000", "--snr", "20",
                  "--out", out, "--label", "t"]) == 0
     path = capsys.readouterr().out.strip()
-    assert path.endswith(".iq") and "8psk" not in path
+    assert path.endswith(".cplx.1000000.16t.pcm") and "8psk" not in path
     rep = str(tmp_path / "r.json")
     assert main(["analyze", path, "--report", rep,
                  "--save-bits", str(tmp_path / "b.txt")]) == 0
@@ -74,7 +74,7 @@ def test_cli_real_pcm_roundtrip(tmp_path, capsys):
     assert main(["gen", "--mod", "qpsk", "--fmt", "real", "--cfo", "100000",
                  "--snr", "16", "--out", out, "--label", "pcm"]) == 0
     path = capsys.readouterr().out.strip()
-    assert path.endswith(".pcm") and "qpsk" not in path
+    assert path.endswith(".real.1000000.16t.pcm") and "qpsk" not in path
     assert main(["analyze", path]) == 0
     printed = capsys.readouterr().out
     assert "qpsk" in printed and "정답" in printed
@@ -108,7 +108,7 @@ def test_cli_survey_wideband_file(tmp_path, capsys):
 
     mix = emit("qpsk", 25e3, -250e3, 1) + emit("16qam", 50e3, 150e3, 2)
     mix = mix + np.sqrt(0.05 / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
-    f = tmp_path / "wb_fs1000000_iq_i16.iq"
+    f = tmp_path / "wb.cplx.1000000.16t.pcm"
     write(str(f), mix, Meta(fs, "iq", "i16"))
     rep = str(tmp_path / "s.json")
     assert main(["survey", str(f), "--report", rep]) == 0
@@ -132,7 +132,7 @@ def test_server_analyze_and_static(server):
     x, _ = generate(GenParams(mod="qpsk", snr=18, fc=8000.0, seed=0))
     raw = np.column_stack([x.real, x.imag]).astype("<f4").tobytes()
     req = urllib.request.Request(
-        server + "/api/analyze?name=cap_fs1000000_iq_f32.iq", data=raw, method="POST")
+        server + "/api/analyze?name=cap.cplx.1000000.32f.pcm", data=raw, method="POST")
     with urllib.request.urlopen(req, timeout=60) as res:
         doc = json.load(res)
     assert doc["detected"]["mod"] == "qpsk"
@@ -144,7 +144,7 @@ def test_server_analyze_and_static(server):
     raw16 = np.clip(np.round(xr * 32767 / np.percentile(np.abs(xr), 99.9)),
                     -32768, 32767).astype("<i2").tobytes()
     req = urllib.request.Request(
-        server + "/api/analyze?name=cap_fs1000000_real_i16.pcm", data=raw16, method="POST")
+        server + "/api/analyze?name=cap.real.1000000.16t.pcm", data=raw16, method="POST")
     with urllib.request.urlopen(req, timeout=60) as res:
         assert json.load(res)["detected"]["mod"] == "bpsk"
     bad = urllib.request.Request(server + "/api/analyze?name=nometa.bin",

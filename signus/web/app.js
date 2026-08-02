@@ -2,8 +2,8 @@
 const $ = (id) => document.getElementById(id);
 const API = "/api/analyze";
 const SURVEY_API = "/api/survey";
-const FS_RE = /(?:^|_)fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
-const RF_RE = /(?:^|_)rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)/i;
+const FS_RE = /(?:^|[._])fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:[._]|$)/i;
+const RF_RE = /(?:^|[._])rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:[._]|$)/i;
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const state = { file: null, sidecar: null, meta: null, resp: null, batch: [],
                 burst: null, survey: null, drilled: false, overview: null };
@@ -12,13 +12,22 @@ const state = { file: null, sidecar: null, meta: null, resp: null, batch: [],
 const DTYPES = ["i8", "u8", "i16", "u16", "f32", "f64"];
 // baudline-style aliases: <bits>t = two's complement (signed), <bits>o = offset (unsigned)
 const DTYPE_ALIAS = { "8t": "i8", "8o": "u8", "16t": "i16", "16o": "u16", "32f": "f32", "64f": "f64" };
+const FMTS = { cplx: "iq", real: "real", iq: "iq" };   // iq = 옛 밑줄 형식의 이름
+/* <이름>.cplx|real.<샘플레이트>.<16t>.pcm — 샘플레이트는 접두사가 없으므로 포맷 바로
+   다음 자리로 찾는다. 옛 밑줄 형식(<이름>_fs…_iq_i16.iq)도 그대로 읽는다. sigio.py 와 규칙이
+   같아야 한다: 여기서 갈리면 웹은 되고 CLI 는 안 되는(또는 그 반대) 조용한 불일치가 된다. */
 function parseName(name) {
-  const stem = name.replace(/^.*\//, "").replace(/\.[^.]*$/, "").toLowerCase();
-  const mt = FS_RE.exec(stem), rt = RF_RE.exec(stem), toks = stem.split("_");
+  const base = name.replace(/^.*\//, "").toLowerCase();
+  const mt = FS_RE.exec(base), rt = RF_RE.exec(base), toks = base.split(/[._]/);
   const dt = toks.find((t) => DTYPES.includes(t) || t in DTYPE_ALIAS);
+  const num = (k) => /^\d+$/.test(toks[k + 1] || "");
+  const cands = toks.map((t, k) => (t in FMTS ? k : -1)).filter((k) => k >= 0);
+  // 뒤에 숫자가 붙은 쪽이 진짜 포맷이다 (이름에 real/cplx 이 섞여도 안 헷갈린다)
+  const i = cands.find(num) ?? (cands.length ? cands[0] : -1);
+  const fs = (i >= 0 && num(i)) ? parseFloat(toks[i + 1]) : (mt ? parseFloat(mt[1]) : null);
   return {
-    fs: mt ? parseFloat(mt[1]) : null,
-    fmt: toks.find((t) => t === "iq" || t === "real") || null,
+    fs,
+    fmt: i >= 0 ? FMTS[toks[i]] : null,
     dtype: dt ? (DTYPE_ALIAS[dt] || dt) : "i16",
     endian: toks.includes("be") ? "be" : "le",
     bitrev: toks.includes("bitrev"),

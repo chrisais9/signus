@@ -44,12 +44,53 @@ def test_qam_gray_adjacency():
 
 
 def test_parse_name_minimal_and_blind():
-    m = parse_name(make_name("cap", Meta(2_400_000, "iq", "f32"), "iq"))
+    m = parse_name(make_name("cap", Meta(2_400_000, "iq", "f32")))
     assert (m.fs, m.fmt, m.dtype) == (2_400_000, "iq", "f32") and m.ok()
     assert not parse_name("mystery.bin").ok()
     # legacy truth tokens are ignored, not parsed
     legacy = parse_name("sig_fs1000000_fc10000_baud9600_qpsk_snr20_real_i16.pcm")
     assert (legacy.fs, legacy.fmt) == (1_000_000, "real")
+
+
+def test_make_name_is_dot_separated_and_ends_in_pcm():
+    assert make_name("cap", Meta(2e6, "iq", "i16")) == "cap.cplx.2000000.16t.pcm"
+    assert make_name("voice", Meta(48000, "real", "f32")) == "voice.real.48000.32f.pcm"
+    assert make_name("x", Meta(1e6, "iq", "u8", "be", True)) == "x.cplx.1000000.8o.be.bitrev.pcm"
+
+
+@pytest.mark.parametrize("name,want", [
+    ("capture.cplx.2000000.16t.pcm", (2e6, "iq", "i16")),
+    ("voice.real.48000.32f.pcm", (48000.0, "real", "f32")),
+    ("rtl.cplx.2400000.8o.pcm", (2.4e6, "iq", "u8")),
+    # 이름 자체가 숫자여도 샘플레이트를 헷갈리면 안 된다: fs 는 cplx|real 바로 다음 자리다
+    ("20260801.cplx.1000000.16t.pcm", (1e6, "iq", "i16")),
+    # 샘플타입이 없으면 i16 (기본값). 그래도 fs/fmt 는 읽힌다
+    ("bare.cplx.1000000.pcm", (1e6, "iq", "i16")),
+])
+def test_parse_dot_format(name, want):
+    m = parse_name(name)
+    assert (m.fs, m.fmt, m.dtype) == want and m.ok()
+
+
+@pytest.mark.parametrize("name", [
+    "my_real.cplx.1000000.16t.pcm",     # 이름 끝이 real
+    "x_real.cplx.1000000.32f.pcm",
+    "cplx.1000000.16t.pcm",             # 라벨 없이 포맷이 0번 토막
+])
+def test_label_containing_a_format_word_never_flips_the_format(name):
+    # 이름에 real/cplx 이 섞이면 어느 쪽이 진짜인지 헷갈린다. 복소 캡처를 real 로 읽으면
+    # 조용히 쓰레기가 나온다(길이 2배, 성상도 붕괴) -- 이 저장소의 cardinal sin 이다.
+    # 진짜 포맷은 샘플레이트를 데리고 다니는 쪽이라는 규칙으로 가른다.
+    assert parse_name(name).fmt == "iq"
+
+
+def test_parse_dot_format_extras():
+    m = parse_name("cap.cplx.1000000.16t.be.bitrev.pcm")
+    assert m.endian == "be" and m.bitrev
+    assert parse_name("cap.cplx.20000000.16t.rf162000000.pcm").rf_center == 162e6
+    # 점 형식과 밑줄 형식이 같은 파일을 같게 읽는다 (마이그레이션 중 두 이름이 섞여도 안전)
+    a, b = parse_name("x.cplx.1000000.16t.pcm"), parse_name("x_fs1000000_iq_i16.iq")
+    assert (a.fs, a.fmt, a.dtype) == (b.fs, b.fmt, b.dtype)
 
 
 def test_parse_baudline_aliases_endian_bitrev():
@@ -59,7 +100,7 @@ def test_parse_baudline_aliases_endian_bitrev():
     assert parse_name("cap_fs1_iq_8t.iq").dtype == "i8"
     m = parse_name("cap_fs1000000_iq_i16_be_bitrev.iq")
     assert m.endian == "be" and m.bitrev
-    rt = parse_name(make_name("x", Meta(1e6, "iq", "u16", "be", True), "iq"))
+    rt = parse_name(make_name("x", Meta(1e6, "iq", "u16", "be", True)))
     assert (rt.dtype, rt.endian, rt.bitrev) == ("u16", "be", True)
 
 
@@ -74,7 +115,7 @@ def test_malformed_sigmf_falls_back_to_filename(tmp_path, junk):
     # a junk .sigmf-meta beside a valid token-named file must NOT crash read(): parse_sigmf
     # returns None (any malformed-but-parseable shape) and read() falls back to filename tokens.
     x, _ = generate(GenParams(mod="qpsk", n_symbols=300, snr=30, seed=1))
-    f = str(tmp_path / make_name("cap", Meta(1e6, "iq", "f32"), "iq"))
+    f = str(tmp_path / make_name("cap", Meta(1e6, "iq", "f32")))
     write(f, x, Meta(1e6, "iq", "f32"))
     with open(os.path.splitext(f)[0] + ".sigmf-meta", "w") as fh:
         fh.write(junk)
@@ -110,7 +151,7 @@ def test_sample_type_matrix_roundtrip(tmp_path, dtype, endian, bitrev):
     """write -> read must preserve the waveform for every sample-type variant."""
     x, _ = generate(GenParams(mod="qpsk", n_symbols=300, snr=30, seed=5))
     meta = Meta(1e6, "iq", dtype, endian, bitrev)
-    f = str(tmp_path / make_name("t", meta, "iq"))
+    f = str(tmp_path / make_name("t", meta))
     write(f, x, meta)
     y, _ = read(f)
     m = min(x.size, y.size)

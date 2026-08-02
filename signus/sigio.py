@@ -1,4 +1,4 @@
-"""Sample file I/O. Filename carries read-necessities ONLY (fs, iq|real, sample
+"""Sample file I/O. Filename carries read-necessities ONLY (fs, cplx|real, sample
 type, endian, bitrev); ground truth lives in a `<filename>.json` sidecar the
 analyzer never reads. SigMF sidecars (`<stem>.sigmf-meta`) are also understood."""
 
@@ -9,8 +9,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-_FS_TOK = re.compile(r"(?:^|_)fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)", re.I)
-_RF_TOK = re.compile(r"(?:^|_)rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:_|$)", re.I)
+# fs/rf 토막은 옛 밑줄 형식 전용이다. 점으로도 끊길 수 있어 경계에 둘 다 넣는다 -- 새 형식은
+# 샘플레이트를 접두사 없이 cplx|real 바로 뒤에 놓으므로 이 정규식에 걸리지 않는다.
+_FS_TOK = re.compile(r"(?:^|[._])fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:[._]|$)", re.I)
+_RF_TOK = re.compile(r"(?:^|[._])rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:[._]|$)", re.I)
 
 # token -> (numpy code, full-scale divisor, offset). u-types are offset binary
 # (e.g. 8o / RTL-SDR u8: 0..255 with 128 = zero).
@@ -21,6 +23,8 @@ _DTYPES = {
 }
 # baudline-style aliases: <bits>t = two's complement, <bits>o = offset binary
 _ALIAS = {"8t": "i8", "8o": "u8", "16t": "i16", "16o": "u16", "32f": "f32", "64f": "f64"}
+_TOK = {v: k for k, v in _ALIAS.items()}     # 저장할 땐 baudline 표기로 되돌린다
+_FMT = {"cplx": "iq", "real": "real", "iq": "iq"}   # iq = 옛 밑줄 형식의 이름
 _BITREV = np.array([int(f"{i:08b}"[::-1], 2) for i in range(256)], dtype=np.uint8)
 
 # SigMF core:datatype -> (dtype token, fmt, endian)
@@ -42,15 +46,31 @@ class Meta:
 
 
 def parse_name(name: str) -> Meta:
-    """Extract fs/fmt/dtype/endian/bitrev tokens from a filename; rest ignored."""
-    stem = os.path.splitext(os.path.basename(name))[0].lower()
+    """파일명이 읽기 필수 정보를 실어 나른다 (정답은 사이드카에만 있고 절대 읽지 않는다).
+
+        새 형식  <이름>.cplx|real.<샘플레이트 정수>.<16t>[.be][.bitrev].pcm
+        옛 형식  <이름>_fs<샘플레이트>_iq|real_<i16>[_be][_bitrev].iq
+
+    샘플레이트는 새 형식에서 접두사 없이 온다 -- 그래서 '숫자처럼 생긴 토막'이 아니라
+    cplx|real **바로 다음 자리**로 찾는다. 이름 자체가 숫자여도(20260801.cplx.…) 안 헷갈린다.
+    확장자를 떼지 않고 통째로 쪼갠다: 새 형식은 마지막 토막(.pcm)이 포맷을 뜻하지 않고,
+    옛 형식은 확장자(.iq)가 이미 다른 토막과 같은 말을 하므로 어느 쪽도 손해가 없다."""
+    base = os.path.basename(name).lower()
+    toks = re.split(r"[._]", base)
+    # 뒤에 숫자가 붙은 포맷 토막을 먼저 고른다: 이름에 real/cplx 이 섞여 있어도(my_real.cplx.…)
+    # 진짜 포맷은 샘플레이트를 데리고 다니는 쪽이다. 없으면 옛 형식이므로 첫 토막을 쓴다.
+    cands = [k for k, t in enumerate(toks) if t in _FMT]
+    i = next((k for k in cands if k + 1 < len(toks) and toks[k + 1].isdigit()),
+             cands[0] if cands else None)
     m = Meta()
-    if mt := _FS_TOK.search(stem):
+    if i is not None:                   # 'is not None' 이어야 한다 -- 0 번 토막(cplx.…)도 유효하다
+        m.fmt = _FMT[toks[i]]
+        if i + 1 < len(toks) and toks[i + 1].isdigit():
+            m.fs = float(toks[i + 1])
+    if m.fs is None and (mt := _FS_TOK.search(base)):
         m.fs = float(mt.group(1))
-    if rt := _RF_TOK.search(stem):
+    if rt := _RF_TOK.search(base):
         m.rf_center = float(rt.group(1))
-    toks = stem.split("_")
-    m.fmt = next((t for t in toks if t in ("iq", "real")), None)
     m.dtype = next((_ALIAS.get(t, t) for t in toks if t in _DTYPES or t in _ALIAS), "i16")
     m.endian = "be" if "be" in toks else "le"
     m.bitrev = "bitrev" in toks
@@ -81,10 +101,11 @@ def parse_sigmf(path: str) -> Meta | None:
     return Meta(fs, fmt, dtype, endian, rf_center=rf)
 
 
-def make_name(label: str, m: Meta, ext: str) -> str:
-    fs_tok = str(int(m.fs)) if m.fs == int(m.fs) else f"{m.fs:f}".rstrip("0").rstrip(".")
-    extra = ("_be" if m.endian == "be" else "") + ("_bitrev" if m.bitrev else "")
-    return f"{label}_fs{fs_tok}_{m.fmt}_{m.dtype}{extra}.{ext}"
+def make_name(label: str, m: Meta) -> str:
+    """저장은 새 형식만: <이름>.cplx|real.<샘플레이트>.<16t>[.be][.bitrev].pcm"""
+    extra = (".be" if m.endian == "be" else "") + (".bitrev" if m.bitrev else "")
+    kind = "real" if m.fmt == "real" else "cplx"
+    return f"{label}.{kind}.{m.fs:.0f}.{_TOK.get(m.dtype, m.dtype)}{extra}.pcm"
 
 
 def decode(raw: bytes, meta: Meta) -> np.ndarray:

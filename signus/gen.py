@@ -179,7 +179,7 @@ def save(p: GenParams, outdir: str, label: str = "sig") -> str:
     """Write samples + `<file>.json` ground-truth sidecar; return the data path."""
     x, _ = generate(p)
     meta = Meta(p.fs, p.fmt, p.dtype, p.endian, p.bitrev)
-    name = make_name(label, meta, "iq" if p.fmt == "iq" else "pcm")
+    name = make_name(label, meta)
     os.makedirs(outdir, exist_ok=True)
     path = os.path.join(outdir, name)
     write(path, x, meta)

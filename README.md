@@ -19,8 +19,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e .                 # 'signus' 명령 등록
 
 signus dataset --out samples               # 변조×샘플타입×장애 30종 + 정답 사이드카
-signus analyze samples/16qam_fs1000000_iq_i16.iq   # 단일 신호
-signus survey capture_fs20000000_iq_i16.iq         # 광대역: 모든 신호 탐지+복조
+signus analyze samples/16qam.cplx.1000000.16t.pcm  # 단일 신호
+signus survey capture.cplx.20000000.16t.pcm        # 광대역: 모든 신호 탐지+복조
 signus sweep --tier core                   # 전수조사 (CORE 100% 필수, BER=0)
 signus serve                               # 웹 UI → http://127.0.0.1:8000
 ```
@@ -39,7 +39,7 @@ signus serve                               # 웹 UI → http://127.0.0.1:8000
 | — | OQPSK | ❌ 생성 전용 (아래 참조) |
 
 **샘플 타입**: `i8`/`u8`/`i16`/`u16`/`f32`/`f64` × little/big endian × 바이트 내 비트 역순.
-baudline 별칭 `8t`(부호) `8o`(오프셋 바이너리) `16t` `16o` 인식. 실수 통과대역 `.pcm`과 복소 `.iq` 모두 지원.
+baudline 별칭 `8t`(부호) `8o`(오프셋 바이너리) `16t` `16o` 를 파일명에 씁니다. 실수 통과대역(`real`)과 복소(`cplx`) 모두 지원하며 확장자는 둘 다 `.pcm`.
 
 ### v3.1 강건성 (전부 자동, 플래그로 표시)
 - **반송파 앨리어스 자동 해소**: M제곱 톤은 fs 모듈로 랩되므로 fc는 fs/sym 모듈로만 결정됩니다.
@@ -70,7 +70,7 @@ baudline 별칭 `8t`(부호) `8o`(오프셋 바이너리) `16t` `16o` 인식. �
 
 ## 파일 규약 — 파일명에는 정답이 없다
 
-`이름_fs<샘플레이트>_<iq|real>_<샘플타입>[_be][_bitrev].iq`
+`이름.<cplx|real>.<샘플레이트>.<샘플타입>[.be][.bitrev].pcm` (옛 `이름_fs…_iq_i16.iq` 도 읽습니다)
 
 정답(변조·fc·baud·SNR·롤오프)은 생성기가 만드는 `<파일명>.json` 사이드카에만 있고,
 **분석기는 사이드카를 절대 읽지 않습니다**. 채점기·UI만 비교용으로 씁니다. `.sigmf-meta`(SigMF)도
