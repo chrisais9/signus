@@ -365,7 +365,30 @@ def pack(prefix: str, tokens: list[str], size: float = 7.4,
     return lines
 
 
-def build_diff(base: dict[str, str], base_label: str) -> str | None:
+def wcut(s: str, w: int = 92) -> str:
+    """표시 폭 기준 자르기 — 한글은 2칸이라 len() 으로 자르면 행을 넘친다."""
+    acc = 0
+    for i, ch in enumerate(s):
+        acc += cw(ch)
+        if acc > w:
+            return s[:i] + "…"
+    return s
+
+
+def change_log(base_label: str) -> list[str]:
+    """기준점 이후 필사 대상 파일을 건드린 커밋 제목 — 머리 블록의 "바뀐 내용" 재료.
+    커밋 제목이 이미 사람이 쓴 기능 요약이라 따로 지어내지 않는다. 커밋 전 변경만 --note 로."""
+    m = re.search(r"git (\S+)", base_label) or re.search(r"\(([0-9a-f]{6,40})", base_label)
+    if not m:
+        return []
+    paths = sorted({rel.split("/")[0] for _, rel, _ in FILES})
+    r = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%s",
+                        f"{m.group(1)}..HEAD", "--", *paths], capture_output=True, text=True)
+    return [s for s in r.stdout.splitlines() if s.strip()] if r.returncode == 0 else []
+
+
+def build_diff(base: dict[str, str], base_label: str,
+               notes: tuple[str, ...] | list[str] = ()) -> str | None:
     """바뀐 파일은 통째로 인쇄한다. 표지는 따로 두지 않고 머리 몇 줄로 접는다."""
     cb_map, cb_total = codebook_page_map()
     per_file = []
@@ -386,7 +409,9 @@ def build_diff(base: dict[str, str], base_label: str) -> str | None:
     n_files = (len(pack(LIST_PRE, [f"{rel}(999)" for rel, *_ in per_file]))
                if per_file else 0)
     gone_lines = pack("삭제된 파일 ", gone) if gone else []
-    head_rows = 4 + n_files + len(gone_lines)     # 제목/메타/읽는법/빈줄 + 목록
+    what = [wcut(s) for s in [*notes, *change_log(base_label)]]   # 무엇이 바뀌었나:
+    #        --note + 커밋 제목. 한 항목 = 한 행 (종이 절약, 넘치면 폭 기준으로 자름)
+    head_rows = 4 + len(what) + n_files + len(gone_lines)  # 제목/메타/읽는법/빈줄 + 요약 + 목록
 
     flow: list[tuple[str, str, str, str, str]] = []   # (owner, kind, o, n, cell)
     starts: dict[str, int] = {}
@@ -417,6 +442,9 @@ def build_diff(base: dict[str, str], base_label: str) -> str | None:
          f"{len(per_file)}개 파일 · <b>+{tot_a}</b> / −{tot_d} 줄 · "
          f"총 {total_pages}쪽 &#160;|&#160; 새 코드북 {cb_total}쪽"),
     ]
+    for j, s in enumerate(what):
+        head.append(("", "fl", "", "",
+                     ("<b>바뀐 내용</b>&#160; " if j == 0 else "") + esc("· " + s)))
     if per_file:
         real = pack(LIST_PRE, [f"{rel}({starts[rel]})" for rel, *_ in per_file])
         real += [""] * (n_files - len(real))      # 상한으로 잡은 행수에 맞춘다
@@ -750,6 +778,9 @@ def main() -> int:
     ap.add_argument("--from", dest="base", default="baseline",
                     help="변경분 기준점: baseline | git:<rev>")
     ap.add_argument("--snap", action="store_true", help="build 후 기준점도 갱신")
+    ap.add_argument("--note", action="append", default=[],
+                    help="변경분 머리의 '바뀐 내용'에 한 줄 추가 (여러 번 가능). 커밋 제목은"
+                         " 자동으로 실리므로 커밋 전 변경을 설명할 때만 쓴다")
     a = ap.parse_args()
     DOCS.mkdir(exist_ok=True)
 
@@ -775,7 +806,7 @@ def main() -> int:
         if not base:
             print(f"기준점이 없어 변경분을 만들 수 없습니다 ({label}) — 먼저 snap 하세요")
         else:
-            doc = build_diff(base, label)
+            doc = build_diff(base, label, a.note)
             if doc is None:
                 print("변경 없음 — 변경분 PDF 생략")
             else:
