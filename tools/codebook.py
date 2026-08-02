@@ -365,31 +365,26 @@ def pack(prefix: str, tokens: list[str], size: float = 7.4,
     return lines
 
 
-def wcut(s: str, w: int = 92) -> str:
-    """표시 폭 기준 자르기 — 한글은 2칸이라 len() 으로 자르면 행을 넘친다."""
-    acc = 0
-    for i, ch in enumerate(s):
-        acc += cw(ch)
-        if acc > w:
-            return s[:i] + "…"
-    return s
-
-
 def change_log(base_label: str) -> list[str]:
-    """기준점 이후 필사 대상 파일을 건드린 커밋 제목 — 머리 블록의 "바뀐 내용" 재료.
-    커밋 제목이 이미 사람이 쓴 기능 요약이라 따로 지어내지 않는다. 커밋 전 변경만 --note 로."""
+    """기준점 이후 필사 대상 파일을 건드린 커밋 제목 — --note 를 안 준 발급의 폴백 요약.
+    커밋 문체는 알아듣기 어렵다는 지적(2026-08-02)에 따라 접두사(fix: 등)를 벗기고
+    자동 커밋(chore)은 뺀다. 기본은 발급자가 --note 로 쓰는 보통 문장이다."""
     m = re.search(r"git (\S+)", base_label) or re.search(r"\(([0-9a-f]{6,40})", base_label)
     if not m:
         return []
     paths = sorted({rel.split("/")[0] for _, rel, _ in FILES})
     r = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%s",
                         f"{m.group(1)}..HEAD", "--", *paths], capture_output=True, text=True)
-    return [s for s in r.stdout.splitlines() if s.strip()] if r.returncode == 0 else []
+    if r.returncode != 0:
+        return []
+    subs = [s for s in r.stdout.splitlines() if s.strip() and not s.startswith("chore")]
+    return [re.sub(r"^\w+(\([^)]*\))?!?:\s*", "", s) for s in subs]
 
 
 def build_diff(base: dict[str, str], base_label: str,
                notes: tuple[str, ...] | list[str] = ()) -> str | None:
-    """바뀐 파일은 통째로 인쇄한다. 표지는 따로 두지 않고 머리 몇 줄로 접는다."""
+    """바뀐 파일은 통째로 인쇄한다. 표지 한 장(무엇이 왜 바뀌었나 + 파일 표)을 앞에 둔다
+    (2026-08-02 사용자 요청 — 종이 한 장보다 한눈에 보이는 쪽이 낫다)."""
     cb_map, cb_total = codebook_page_map()
     per_file = []
     for _, rel, _ in FILES:
@@ -404,22 +399,17 @@ def build_diff(base: dict[str, str], base_label: str,
     if not per_file and not gone:
         return None
 
-    # 머리 블록 높이를 먼저 확정해야 쪽번호가 정해진다 → 쪽번호를 999 로 잡아 상한을 쓴다
-    LIST_PRE = "변경된 파일 (괄호=쪽) "
-    n_files = (len(pack(LIST_PRE, [f"{rel}(999)" for rel, *_ in per_file]))
-               if per_file else 0)
-    gone_lines = pack("삭제된 파일 ", gone) if gone else []
-    what = [wcut(s) for s in [*notes, *change_log(base_label)]]   # 무엇이 바뀌었나:
-    #        --note + 커밋 제목. 한 항목 = 한 행 (종이 절약, 넘치면 폭 기준으로 자름)
-    head_rows = 4 + len(what) + n_files + len(gone_lines)  # 제목/메타/읽는법/빈줄 + 요약 + 목록
+    # 요약은 --note(보통 문장)가 기본, 없으면 커밋 제목(접두사 제거)으로 폴백.
+    # 표지는 격자가 아니라 자연 줄바꿈이 되므로 폭 자르기가 필요 없다.
+    what = list(notes) or change_log(base_label)
 
     flow: list[tuple[str, str, str, str, str]] = []   # (owner, kind, o, n, cell)
     starts: dict[str, int] = {}
     for rel, rows, n_add, n_del, is_new, changed in per_file:
-        pos = head_rows + len(flow)
+        pos = len(flow)
         if pos % LINES_PER_PAGE > LINES_PER_PAGE - 4:     # 파일 머리 고아 방지
             flow += [("", "blank", "", "", "")] * (LINES_PER_PAGE - pos % LINES_PER_PAGE)
-        starts[rel] = (head_rows + len(flow)) // LINES_PER_PAGE + 1
+        starts[rel] = len(flow) // LINES_PER_PAGE + 2     # +2: 1쪽은 표지
         chg = ranges(changed)
         flow.append((rel, "file", "", "", (
             f'{html.escape(rel)}{" (신규 파일)" if is_new else ""}'
@@ -430,39 +420,41 @@ def build_diff(base: dict[str, str], base_label: str,
                f'{"…" if len(chg) > 110 else ""}</span>' if not is_new else ''))))
         flow += [(rel, *r) for r in rows]
         flow.append((rel, "blank", "", "", ""))
-    total_pages = (head_rows + len(flow) + LINES_PER_PAGE - 1) // LINES_PER_PAGE
+    total_pages = 1 + (len(flow) + LINES_PER_PAGE - 1) // LINES_PER_PAGE
 
     tot_a = sum(f[2] for f in per_file)
     tot_d = sum(f[3] for f in per_file)
-    head: list[tuple[str, str, str, str, str]] = [
-        ("", "h1", "", "", "변경분 — signus 필사용 코드북 "
-         '<span class="h1s">바뀐 파일은 통째로 실었습니다 · 초록 줄만 달라진 곳</span>'),
-        ("", "h2", "", "", f"{html.escape(base_label)} &#160;→&#160; "
-         f"{date.today().isoformat()} {git_head()} &#160;|&#160; "
-         f"{len(per_file)}개 파일 · <b>+{tot_a}</b> / −{tot_d} 줄 · "
-         f"총 {total_pages}쪽 &#160;|&#160; 새 코드북 {cb_total}쪽"),
-    ]
-    for j, s in enumerate(what):
-        head.append(("", "fl", "", "",
-                     ("<b>바뀐 내용</b>&#160; " if j == 0 else "") + esc("· " + s)))
-    if per_file:
-        real = pack(LIST_PRE, [f"{rel}({starts[rel]})" for rel, *_ in per_file])
-        real += [""] * (n_files - len(real))      # 상한으로 잡은 행수에 맞춘다
-        for line in real[:n_files]:
-            head.append(("", "fl", "", "", esc(line)))
-    for line in gone_lines:
-        head.append(("", "fl del", "", "", esc(line)))
-    head += [
-        ("", "h3", "", "", '<span class="lg add">초록</span> = 새로 쓸 줄 (오른쪽 숫자가 새 '
-         '줄번호) &#160;·&#160; 색 없는 줄 = 그대로 &#160;·&#160; '
-         '<span class="lg cut">붉은 점선</span> = 그 자리에서 몇 줄 사라짐 &#160;·&#160; '
-         f'{CONT_MARK} = 윗줄에 붙는 이어짐'),
-        ("", "blank", "", "", ""),
-    ]
-    assert len(head) == head_rows, (len(head), head_rows)
+    frows = "".join(
+        f'<div class="drow2"><span class="tbox">☐</span>'
+        f'<span class="tf">{html.escape(rel)}{" (신규)" if is_new else ""}</span>'
+        f'<span class="dadd">+{n_add}</span>'
+        f'<span class="ddel">{f"−{n_del}" if n_del else ""}</span>'
+        f'<span class="tp">{starts[rel]}쪽</span>'
+        f'<span class="tn">코드북 {cb_map.get(rel, 0)}쪽</span></div>'
+        for rel, _, n_add, n_del, is_new, _ in per_file)
+    for rel in gone:
+        frows += (f'<div class="drow2"><span class="tbox">☐</span>'
+                  f'<span class="tf del">{html.escape(rel)} — 삭제됨 (필사본에서 지운다)</span>'
+                  '<span></span><span></span><span></span><span></span></div>')
+    cover = f"""<section class="page cover">
+  <div class="ctitle">signus <span class="cgray">변경분</span></div>
+  <div class="csub">바뀐 파일은 통째로 실었습니다 — 그 파일 쪽만 새로 쓰면 됩니다</div>
+  <div class="cmeta">{html.escape(base_label)} &#160;→&#160; {date.today().isoformat()}
+    · {git_head()} &#160;&#160;|&#160;&#160; {len(per_file)}개 파일 ·
+    <b>+{tot_a}</b> / −{tot_d} 줄 · 코드 {total_pages - 1}쪽
+    &#160;&#160;|&#160;&#160; 새 코드북 {cb_total}쪽</div>
+  <div class="cwhat"><div class="wt">바뀐 내용</div>
+    {"".join(f"<div>·&#160; {html.escape(w)}</div>" for w in what)
+     or "<div>·&#160; (요약 없음 — 발급 시 --note 를 빠뜨렸다)</div>"}</div>
+  <div class="toc">{frows}</div>
+  <div class="cnote"><span class="lg add">초록</span> = 새로 쓸 줄 (오른쪽 숫자가 새 줄번호)
+    &#160;·&#160; 색 없는 줄 = 그대로 &#160;·&#160; <span class="lg cut">붉은 점선</span> =
+    그 자리에서 몇 줄 사라짐 &#160;·&#160; <span class="mono">{CONT_MARK}</span> =
+    윗줄에 붙는 이어짐 (원래 한 줄이니 붙여서 입력)</div>
+</section>"""
 
-    pages = []
-    for pno, chunk in enumerate(paginate(head + flow), 1):
+    pages = [cover]
+    for pno, chunk in enumerate(paginate(flow), 2):
         owners: list[str] = []
         for r in chunk:
             if r[0] and (not owners or owners[-1] != r[0]):
@@ -606,6 +598,16 @@ SHELL = """<!doctype html>
   .tn, .tp { font-family: "Apple SD Gothic Neo", sans-serif; text-align: right;
              color: #666; font-variant-numeric: tabular-nums; }
   .tp { font-weight: 700; color: #111; }
+  /* 변경분 표지 */
+  .cgray { color: #999; font-weight: 300; }
+  .cwhat { font-family: "Apple SD Gothic Neo", sans-serif; font-size: 10pt; margin-top: 12pt;
+           line-height: 1.8; color: #111; }
+  .cwhat .wt { font-size: 8pt; font-weight: 700; color: #888; letter-spacing: 3pt;
+               margin-bottom: 2pt; }
+  .drow2 { display: grid; grid-template-columns: 14pt 1fr 42pt 42pt 46pt 74pt;
+           align-items: baseline; font-size: 9pt; line-height: 19pt;
+           border-bottom: 0.3pt dotted #ddd; }
+  .tf.del { color: #961a1a; text-decoration: line-through; }
   .dadd { text-align: right; color: #0a6b2d; font-weight: 700;
           font-variant-numeric: tabular-nums; }
   .ddel { text-align: right; color: #961a1a; font-weight: 700;
