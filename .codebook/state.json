@@ -1,12 +1,12 @@
 {
- "date": "2026-07-27",
- "head": "c6a9bc6+수정중",
+ "date": "2026-08-02",
+ "head": "bea85a5+수정중",
  "files": {
-  "pyproject.toml": "013df8d70066",
+  "pyproject.toml": "3565bf49dd97",
   "signus/__init__.py": "29c12d294e8a",
-  "signus/sigio.py": "e3be43c08200",
+  "signus/sigio.py": "29bb96b21ddc",
   "signus/constellations.py": "b35bfa4b0cfa",
-  "signus/gen.py": "b1fa8de8145d",
+  "signus/gen.py": "3ad59050c492",
   "signus/spectrum.py": "6d95b24788ed",
   "signus/detect.py": "c297098bb8e7",
   "signus/channelize.py": "d6e1b69292ae",
@@ -18,11 +18,11 @@
   "signus/_accel.py": "2b87c70fc639",
   "signus/fsk.py": "da7cbec6ffef",
   "signus/chirp.py": "9887b84f4081",
-  "signus/pipeline.py": "9694de6ea8c5",
-  "signus/cli.py": "cdb1d23b5512",
+  "signus/pipeline.py": "f38dd6e51f0e",
+  "signus/cli.py": "f3d9df30f2cd",
   "signus/server.py": "02f259b5acc5",
   "signus/web/index.html": "eab4171963bd",
   "signus/web/style.css": "c1dff10b538b",
-  "signus/web/app.js": "6bcbeb088df8"
+  "signus/web/app.js": "a2c3c185631c"
  }
 }

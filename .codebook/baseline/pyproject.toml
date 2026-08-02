@@ -11,6 +11,8 @@ dependencies = ["numpy>=1.26", "scipy>=1.11"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]
+# 필사 인쇄물 발급기(tools/codebook.py) 전용. 분석기 본체는 여전히 numpy+scipy 둘뿐이다.
+tools = ["pygments>=2.17"]
 # Optional JIT for the sequential equalizer/carrier loops (16-34x on those loops).
 # Falls back to identical pure-numpy when absent. NOTE: numba pins numpy<2.5.
 fast = ["numba>=0.60"]
