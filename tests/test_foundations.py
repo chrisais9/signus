@@ -84,6 +84,42 @@ def test_label_containing_a_format_word_never_flips_the_format(name):
     assert parse_name(name).fmt == "iq"
 
 
+@pytest.mark.parametrize("name,fs,fmt", [
+    # 라벨의 포맷 단어가 숫자까지 데리고 다니는 경우: 마지막 후보 규칙 + 제원 관문이 막는다.
+    # 적대 감사에서 나온 실제 강탈 사례들 -- fs=20260801(날짜!)로 조용히 복조됐었다.
+    ("rec_iq_20260801.cplx.2400000.16t.pcm", 2400000.0, "iq"),
+    ("sdr_real_20260801.cplx.2400000.16t.pcm", 2400000.0, "iq"),
+    ("real_2.cplx.2400000.16t.pcm", 2400000.0, "iq"),
+    ("x_iq_48000_16t.cplx.1000000.16t.pcm", 1000000.0, "iq"),  # 관문까지 뚫는 라벨 -> 마지막 후보
+])
+def test_label_with_digits_never_hijacks_fs_or_fmt(name, fs, fmt):
+    m = parse_name(name)
+    assert (m.fs, m.fmt) == (fs, fmt)
+
+
+@pytest.mark.parametrize("name,dtype,endian,bitrev", [
+    # 제원 토막은 포맷 토막 **뒤**에만 산다: 라벨의 u8/f32/be/bitrev 는 제원이 아니다.
+    ("u8_check.cplx.2400000.16t.pcm", "i16", "le", False),
+    ("f32_test.cplx.1000000.16t.pcm", "i16", "le", False),
+    ("be_run.cplx.1000000.16t.pcm", "i16", "le", False),
+    ("bitrev_scan.cplx.1000000.16t.pcm", "i16", "le", False),
+    ("rtl_u8.cplx.2400000.8o.pcm", "u8", "le", False),   # 진짜 제원(8o)은 그대로 읽힌다
+])
+def test_label_spec_words_never_pollute_dtype_endian_bitrev(name, dtype, endian, bitrev):
+    m = parse_name(name)
+    assert (m.dtype, m.endian, m.bitrev) == (dtype, endian, bitrev)
+
+
+@pytest.mark.parametrize("name", [
+    "cap.cplx.2.4e6.16t.pcm",       # 점 낀 샘플레이트: fs=2 Hz 로 조용히 오독됐었다
+    "cap.cplx.48_000.16t.pcm",      # 밑줄 낀 샘플레이트: fs=48 Hz
+    "capture_iq_20260728.raw",      # 라벨 숫자를 fs 로 발명했었다 (HEAD 는 크게 죽던 자리)
+])
+def test_broken_sample_rate_dies_loud_instead_of_shrinking(name):
+    # 조용한 오답 대신 시끄러운 실패: fs 를 못 정하면 ok() 가 거짓이어야 read() 가 던진다
+    assert not parse_name(name).ok()
+
+
 def test_parse_dot_format_extras():
     m = parse_name("cap.cplx.1000000.16t.be.bitrev.pcm")
     assert m.endian == "be" and m.bitrev

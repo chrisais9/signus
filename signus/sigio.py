@@ -57,23 +57,30 @@ def parse_name(name: str) -> Meta:
     옛 형식은 확장자(.iq)가 이미 다른 토막과 같은 말을 하므로 어느 쪽도 손해가 없다."""
     base = os.path.basename(name).lower()
     toks = re.split(r"[._]", base)
-    # 뒤에 숫자가 붙은 포맷 토막을 먼저 고른다: 이름에 real/cplx 이 섞여 있어도(my_real.cplx.…)
-    # 진짜 포맷은 샘플레이트를 데리고 다니는 쪽이다. 없으면 옛 형식이므로 첫 토막을 쓴다.
+    # 진짜 포맷 토막 = "숫자 + 아는 제원 토막"을 데리고 다니는 **마지막** 후보. 세 오독을 막는다:
+    #  · 라벨의 real/cplx/iq(rec_iq_20260801.cplx.…)가 fs/fmt 를 강탈 -- 마지막 후보 규칙이 막고,
+    #  · 점 낀 샘플레이트(cap.cplx.2.4e6.… -> fs=2 Hz)와 라벨 숫자를 fs 로 발명(…_iq_20260728.raw)
+    #    -- 숫자 뒤가 제원 토막(16t/be/…/pcm)이어야 한다는 관문이 막는다. 관문에 걸리면 fs 없음으로
+    #    크게 죽는다: 조용한 오답 대신 시끄러운 실패가 이 저장소의 원칙이다.
     cands = [k for k, t in enumerate(toks) if t in _FMT]
-    i = next((k for k in cands if k + 1 < len(toks) and toks[k + 1].isdigit()),
-             cands[0] if cands else None)
+    hits = [k for k in cands if k + 2 < len(toks) and toks[k + 1].isdigit()
+            and (toks[k + 2] in _DTYPES or toks[k + 2] in _ALIAS
+                 or toks[k + 2] in ("be", "bitrev", "pcm") or toks[k + 2].startswith("rf"))]
+    i = hits[-1] if hits else (cands[0] if cands else None)
     m = Meta()
     if i is not None:                   # 'is not None' 이어야 한다 -- 0 번 토막(cplx.…)도 유효하다
         m.fmt = _FMT[toks[i]]
-        if i + 1 < len(toks) and toks[i + 1].isdigit():
+        if i in hits:
             m.fs = float(toks[i + 1])
     if m.fs is None and (mt := _FS_TOK.search(base)):
         m.fs = float(mt.group(1))
     if rt := _RF_TOK.search(base):
         m.rf_center = float(rt.group(1))
-    m.dtype = next((_ALIAS.get(t, t) for t in toks if t in _DTYPES or t in _ALIAS), "i16")
-    m.endian = "be" if "be" in toks else "le"
-    m.bitrev = "bitrev" in toks
+    tail = toks[i + 1:] if i is not None else toks   # 제원은 포맷 토막 **뒤**에만 산다 --
+    m.dtype = next((_ALIAS.get(t, t) for t in tail   # 라벨의 u8/f32/be 가 제원을 오염 못 하게
+                    if t in _DTYPES or t in _ALIAS), "i16")
+    m.endian = "be" if "be" in tail else "le"
+    m.bitrev = "bitrev" in tail
     return m
 
 

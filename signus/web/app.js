@@ -19,18 +19,22 @@ const FMTS = { cplx: "iq", real: "real", iq: "iq" };   // iq = 옛 밑줄 형식
 function parseName(name) {
   const base = name.replace(/^.*\//, "").toLowerCase();
   const mt = FS_RE.exec(base), rt = RF_RE.exec(base), toks = base.split(/[._]/);
-  const dt = toks.find((t) => DTYPES.includes(t) || t in DTYPE_ALIAS);
-  const num = (k) => /^\d+$/.test(toks[k + 1] || "");
+  // 진짜 포맷 토막 = "숫자 + 아는 제원 토막"을 데리고 다니는 마지막 후보. 라벨의 real/cplx/
+  // u8/be 오염과 점 낀 샘플레이트(2.4e6 -> 2 Hz)를 같은 관문으로 막는다 (sigio.py 와 동일 규칙).
+  const spec = (t) => DTYPES.includes(t) || t in DTYPE_ALIAS || t === "be" || t === "bitrev"
+                      || t === "pcm" || t.startsWith("rf");
+  const hit = (k) => /^\d+$/.test(toks[k + 1] || "") && spec(toks[k + 2] || "");
   const cands = toks.map((t, k) => (t in FMTS ? k : -1)).filter((k) => k >= 0);
-  // 뒤에 숫자가 붙은 쪽이 진짜 포맷이다 (이름에 real/cplx 이 섞여도 안 헷갈린다)
-  const i = cands.find(num) ?? (cands.length ? cands[0] : -1);
-  const fs = (i >= 0 && num(i)) ? parseFloat(toks[i + 1]) : (mt ? parseFloat(mt[1]) : null);
+  const hits = cands.filter(hit);
+  const i = hits.length ? hits[hits.length - 1] : (cands.length ? cands[0] : -1);
+  const tail = i >= 0 ? toks.slice(i + 1) : toks;   // 제원은 포맷 토막 뒤에만 산다
+  const dt = tail.find((t) => DTYPES.includes(t) || t in DTYPE_ALIAS);
   return {
-    fs,
+    fs: hits.includes(i) ? parseFloat(toks[i + 1]) : (mt ? parseFloat(mt[1]) : null),
     fmt: i >= 0 ? FMTS[toks[i]] : null,
     dtype: dt ? (DTYPE_ALIAS[dt] || dt) : "i16",
-    endian: toks.includes("be") ? "be" : "le",
-    bitrev: toks.includes("bitrev"),
+    endian: tail.includes("be") ? "be" : "le",
+    bitrev: tail.includes("bitrev"),
     rf: rt ? parseFloat(rt[1]) : null,
   };
 }
@@ -100,8 +104,15 @@ async function acceptFiles(list) {
   state.survey = null;
   state.drilled = false;
   state.overview = null;
-  const sm = metas.find((m) => m.name.toLowerCase().endsWith(".sigmf-meta"));
-  const truth = metas.find((m) => m.name.toLowerCase().endsWith(".json"));
+  // 사이드카는 이름이 같은 캡처의 것만 쓴다 -- 확장자만 보고 집으면 다른 신호의 fs/fmt 로
+  // 조용히 읽는다 (일괄 모드는 이미 stem 대조를 한다: 두 모드가 다르면 그게 또 함정이다)
+  const mine = (m, ext) => {
+    const stem = m.name.toLowerCase().slice(0, -ext.length);
+    const dn = state.file.name.toLowerCase();
+    return dn.startsWith(stem) && (dn.length === stem.length || dn[stem.length] === ".");
+  };
+  const sm = metas.find((m) => m.name.toLowerCase().endsWith(".sigmf-meta") && mine(m, ".sigmf-meta"));
+  const truth = metas.find((m) => m.name.toLowerCase().endsWith(".json") && mine(m, ".json"));
   state.sidecar = truth ? await readJson(truth) : null;   // client-side only, never sent
   state.meta = (sm && metaFromSigmf(await readJson(sm))) || parseName(state.file.name);
   if (state.meta && state.meta.fs && state.meta.fmt) runSurvey();
