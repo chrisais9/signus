@@ -5,9 +5,9 @@ import pytest
 
 from signus import classify as cl
 from signus import dsp
-from signus.cli import ber
 from signus.eq import equalize
 from signus.gen import GenParams, generate
+from signus.lab import ber
 from signus.pipeline import analyze
 from signus.sigio import Meta
 

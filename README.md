@@ -149,8 +149,9 @@ signus/fsk.py             정포락선 게이트 · 주파수 판별 복조
 signus/eq.py              CMA → 결정지향 블라인드 등화기 (심볼간격 + T/2 분수간격)
 signus/spectrum.py        스펙트럼 · 워터폴 (표시 전용)
 signus/pipeline.py        단일 신호 파이프라인 + 광대역 서베이 오케스트레이션
-signus/gen.py             독립 신호 생성기 (수신기와 코드 미공유)
-signus/cli.py             analyze/gen/dataset/sweep/serve + BER 채점
+signus/gen.py             독립 신호 생성기 (수신기와 코드 미공유) — 개발기 전용, 인쇄물 제외
+signus/lab.py             gen/dataset/sweep 명령 + BER 채점 하네스 — 개발기 전용, 인쇄물 제외
+signus/cli.py             analyze/survey/serve (+ lab 이 있으면 gen/dataset/sweep 을 단다)
 signus/server.py          stdlib 웹서버
 signus/web/               vanilla 프런트 (애니메이션 성상도 · 워터폴 · 배치, CDN 없음)
 ```

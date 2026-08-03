@@ -8,9 +8,10 @@ from http.server import ThreadingHTTPServer
 import numpy as np
 import pytest
 
-from signus.cli import _grid, ber, main
+from signus.cli import main
 from signus.constellations import ideal_points
 from signus.gen import GenParams, generate
+from signus.lab import _grid, ber
 from signus.server import Handler
 
 

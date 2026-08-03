@@ -4,8 +4,8 @@ end-to-end packetized-burst decode rescue (raises the decode rate of short burst
 import numpy as np
 import pytest
 
-from signus.cli import ber
 from signus.gen import GenParams, generate
+from signus.lab import ber
 from signus.pipeline import analyze
 from signus.sigio import Meta
 from signus.sync import find_preamble

@@ -9,6 +9,8 @@
 
 지켜야 하는 규약 (docs/필사-코드북-지침.md 참조):
   · 테스트 코드는 넣지 않는다. 실행에 필요한 코드만.
+  · 합성 생성기·채점(EXCLUDED 의 gen.py/lab.py)도 넣지 않는다 — 개발기 전용
+    (2026-08-03 사용자 결정). 격리망 장비가 써야 하는 코드만 싣는다.
   · diff 는 코드 칸에 +/- 접두사를 붙이지 않는다 — 인덴트가 한 칸 밀리면
     필사본이 깨진다. 추가 표시는 줄번호 칸의 색·볼드와 별도 부호 칸으로만.
   · diff 에 없어진 코드 본문을 싣지 않는다. 지울 자리만 한 줄로 알린다.
@@ -60,7 +62,6 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ("1 · 신호 입출력과 기준표", [
         ("signus/sigio.py", "샘플 파일 I/O — 파일명이 fs·iq/real·샘플타입을 실어 나른다"),
         ("signus/constellations.py", "성상도 · 그레이 비트 매핑 · FSK 레벨 (공용 기준표)"),
-        ("signus/gen.py", "합성 신호 생성기 — 테스트 하네스의 정답지"),
     ]),
     ("2 · 광대역 탐지와 채널 추출", [
         ("signus/spectrum.py", "스펙트럼 · 워터폴 뷰 (표시 전용, 탐지엔 미사용)"),
@@ -83,7 +84,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("signus/pipeline.py", "블라인드 복조 종단 조립 — 두 계열의 진입점"),
     ]),
     ("6 · 사용자 인터페이스", [
-        ("signus/cli.py", "CLI — analyze / survey / gen / dataset / sweep / serve"),
+        ("signus/cli.py", "CLI — analyze / survey / serve (합성·채점 명령은 개발기 전용)"),
         ("signus/server.py", "표준 라이브러리만 쓰는 웹 서버 + POST /api/analyze"),
     ]),
     ("7 · 웹 프론트엔드", [
@@ -92,6 +93,15 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("signus/web/app.js", "업로드 · 분석 요청 · 성상도/워터폴 캔버스 렌더링"),
     ]),
 ]
+
+# 개발기 전용 -- 인쇄물·격리망 장비에는 절대 싣지 않는다 (2026-08-03 사용자 결정).
+# 합성·채점은 Claude 가 도는 개발기의 테스트·정합성 확인에만 쓰고, 장비가 써야 하는
+# 기능은 반드시 SECTIONS 쪽 모듈에 넣는다. signus/ 에 새 파일이 생기면 두 목록 중
+# 한쪽에 올려야 발급이 된다 (main 의 검사가 강제한다).
+EXCLUDED = {
+    "signus/gen.py",        # 합성 신호 생성기 -- 테스트 하네스의 정답지
+    "signus/lab.py",        # 채점·전수조사 하네스 (gen/dataset/sweep 명령)
+}
 
 FILES = [(sec, rel, desc) for sec, items in SECTIONS for rel, desc in items]
 LEXERS = {".py": PythonLexer, ".js": JavascriptLexer, ".html": HtmlLexer,
@@ -372,7 +382,9 @@ def change_log(base_label: str) -> list[str]:
     m = re.search(r"git (\S+)", base_label) or re.search(r"\(([0-9a-f]{6,40})", base_label)
     if not m:
         return []
-    paths = sorted({rel.split("/")[0] for _, rel, _ in FILES})
+    # 필사 대상 파일 그대로 넘긴다 — 최상위 접두사(signus)로 뭉치면 EXCLUDED 인
+    # gen.py/lab.py 만 고친 커밋 제목이, 지면에 없는 변경인데도 표지 요약에 실린다
+    paths = [rel for _, rel, _ in FILES]
     r = subprocess.run(["git", "-C", str(ROOT), "log", "--reverse", "--format=%s",
                         f"{m.group(1)}..HEAD", "--", *paths], capture_output=True, text=True)
     if r.returncode != 0:
@@ -633,11 +645,21 @@ def git_head() -> str:
         return "git 없음"
 
 
+def sections_at(rev: str) -> list[str]:
+    """rev 시점 tools/codebook.py 의 SECTIONS 파일 목록 — 그때 필사 대상이던 파일.
+    현재 FILES 만 보면 그 뒤 목록에서 뺀 파일(gen.py 제외가 그 예)이 기준점에 안 실려,
+    변경분 표지의 '삭제됨 (필사본에서 지운다)' 안내가 조용히 빠진다."""
+    r = subprocess.run(["git", "-C", str(ROOT), "show", f"{rev}:tools/codebook.py"],
+                       capture_output=True, text=True)
+    m = re.search(r"^SECTIONS.*?^\]", r.stdout, re.S | re.M) if r.returncode == 0 else None
+    return re.findall(r'\("([^"]+)", "', m.group(0)) if m else []
+
+
 def load_baseline(spec: str) -> tuple[dict[str, str], str]:
     if spec.startswith("git:"):
         rev = spec[4:]
         base = {}
-        for _, rel, _ in FILES:
+        for rel in sorted({rel for _, rel, _ in FILES} | set(sections_at(rev))):
             r = subprocess.run(["git", "-C", str(ROOT), "show", f"{rev}:{rel}"],
                                capture_output=True, text=True)
             if r.returncode == 0:
@@ -791,6 +813,20 @@ def main() -> int:
         print("대상 파일이 없습니다 — tools/codebook.py 의 SECTIONS 를 갱신하세요:")
         for m in missing:
             print("  ", m)
+        return 1
+    listed = {rel for _, rel, _ in FILES}
+    if listed & EXCLUDED:
+        print("EXCLUDED 파일이 SECTIONS 에 들어 있습니다 — 인쇄물에 실리면 안 됩니다:")
+        for rel in sorted(listed & EXCLUDED):
+            print("  ", rel)
+        return 1
+    loose = sorted(str(p.relative_to(ROOT)) for suf in LEXERS
+                   for p in ROOT.glob(f"signus/**/*{suf}")
+                   if str(p.relative_to(ROOT)) not in listed | EXCLUDED)
+    if loose:
+        print("signus/ 에 SECTIONS 에도 EXCLUDED 에도 없는 파일이 있습니다 — 실을지 뺄지 정하세요:")
+        for rel in loose:
+            print("  ", rel)
         return 1
 
     if a.cmd != "snap":

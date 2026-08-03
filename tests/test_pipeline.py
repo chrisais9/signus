@@ -159,7 +159,7 @@ def test_short_burst_baud_rescue(mod, nsym):
     # short + low-SNR burst: the default 4-block |x|^2 baud line picks junk and misclassifies;
     # the fewer-block rescue (lock-gated, keep-best) recovers it. Long signals never enter the
     # rescue -- the full sweep is byte-identical before/after (verified out-of-band).
-    from signus.cli import ber
+    from signus.lab import ber
     x, tx = generate(GenParams(mod=mod, n_symbols=nsym, fs=1e6, baud=1e5, fc=8e4,
                                snr=15, seed=1))
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
@@ -169,7 +169,7 @@ def test_short_burst_baud_rescue(mod, nsym):
 
 def test_8psk_high_carrier_offset():
     # resolve_alias must tile the WHOLE band for sym=8 (was capped at 0.3125*fs -> wrong fc)
-    from signus.cli import ber
+    from signus.lab import ber
     for fc in (0.35e6, 0.40e6, -0.45e6):
         x, tx = generate(GenParams(mod="8psk", baud=2e4, n_symbols=8000, fs=1e6,
                                    fc=fc, snr=25, seed=0))
@@ -198,7 +198,7 @@ def test_post_echo_defold_rescue(taps, ts):
     # a benign post-echo folds qpsk onto a QAM lattice at high lock (confident wrong); the
     # de-fold rescue equalizes and recovers the true lower order. Genuine QAM is never demoted
     # (the full sweep is byte-identical), so this only ever helps.
-    from signus.cli import ber
+    from signus.lab import ber
     x, tx = generate(GenParams(mod="qpsk", n_symbols=6000, fs=1e6, baud=1e5, snr=25,
                                fc=8e3, taps=taps, tap_sym=ts, seed=0))
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
@@ -212,7 +212,7 @@ def test_post_echo_defold_rescue(taps, ts):
 def test_band_edge_carrier_resolves(mod, baud, fc):
     # carriers near/at +-fs/2 straddle the band; the cell-energy alias pick resolves them
     # (a two-sided spectral centroid was corrupted by the wrap -> confident wrong decode).
-    from signus.cli import ber
+    from signus.lab import ber
     x, tx = generate(GenParams(mod=mod, baud=baud, fs=1e6, n_symbols=8000, fc=fc, snr=25, seed=0))
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
     assert r.mod == mod
@@ -222,7 +222,7 @@ def test_band_edge_carrier_resolves(mod, baud, fc):
 def test_marginal_bpsk_not_promoted_to_qpsk():
     # a marginal BPSK (lock just under _EQ_LOCK) triggers the eq rescue; _rescue must re-classify
     # with the estimated symmetry (2), not only order-4, else it is forced to a confident QPSK.
-    from signus.cli import ber
+    from signus.lab import ber
     x, tx = generate(GenParams(mod="bpsk", snr=16, n_symbols=8000, fs=1e6, baud=4e5,
                                rolloff=0.05, seed=0))
     r = analyze(x, Meta(1e6, "iq", "i16", "le"))
@@ -236,7 +236,7 @@ def test_bpsk_multipath_not_promoted_to_qpsk(phase, echo):
     # so it ALSO fits a phantom qpsk ring at a marginally higher lock. symmetry==2 already put
     # bpsk in the candidate set -- the Occam de-fold must keep bpsk (a lower order can't be an
     # over-fit of qpsk), not report a confident wrong qpsk. Genuine qpsk (symmetry 4) is untouched.
-    from signus.cli import ber
+    from signus.lab import ber
     x, tx = generate(GenParams(mod="bpsk", fs=1e6, baud=1e5, snr=16, fc=0.02e6, phase=phase,
                                taps=(1.0, echo * np.exp(1j * 0.5)), tap_sym=1.0, seed=0))
     r = analyze(x, Meta(1e6, "iq", "f32", "le"))
