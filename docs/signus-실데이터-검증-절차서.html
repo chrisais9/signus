@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>signus 실데이터 CLI 검증 절차서</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm 14mm 14mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Apple SD Gothic Neo", "Noto Sans KR", -apple-system, sans-serif;
+         font-size: 10pt; line-height: 1.62; color: #1c2733; }
+  code, pre { font-family: Menlo, "SF Mono", monospace; }
+  code { font-size: 8.6pt; background: #f1f4f7; padding: 0 3px; border-radius: 3px; }
+  pre { font-size: 8.6pt; line-height: 1.5; background: #f4f6f8; border-left: 3px solid #0e5a8a;
+        padding: 6px 10px; margin: 5px 0 7px; white-space: pre-wrap; word-break: break-all;
+        break-inside: avoid; }
+  pre b { color: #0e5a8a; }
+  h1 { font-size: 19pt; line-height: 1.3; letter-spacing: -0.5px; }
+  .sub { color: #51606f; margin: 2px 0 10px; font-size: 10.5pt; }
+  .meta { font-size: 8.5pt; color: #6b7885; border-bottom: 2px solid #0e5a8a; padding-bottom: 8px;
+          margin-bottom: 12px; }
+  h2 { font-size: 12.5pt; margin: 14px 0 5px; padding-top: 10px; border-top: 1px solid #d7dde3;
+       break-after: avoid; }
+  h2 .n { display: inline-block; min-width: 22px; height: 22px; line-height: 22px; text-align: center;
+          background: #0e5a8a; color: #fff; border-radius: 50%; font-size: 11pt; margin-right: 7px; }
+  h3 { font-size: 10.5pt; margin: 8px 0 3px; break-after: avoid; }
+  p { margin: 3px 0; }
+  ul, ol { margin: 3px 0 5px 20px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 5px 0 8px; break-inside: avoid; }
+  th, td { border: 1px solid #c9d2da; padding: 3px 7px; font-size: 9pt; vertical-align: top;
+           text-align: left; }
+  th { background: #eaf0f5; font-size: 8.6pt; }
+  .why { background: #eef5fa; border-left: 3px solid #0e5a8a; padding: 5px 10px; margin: 6px 0;
+         font-size: 9.2pt; break-inside: avoid; }
+  .warn { background: #fdf2ea; border-left: 3px solid #b4552d; padding: 5px 10px; margin: 6px 0;
+          font-size: 9.2pt; break-inside: avoid; }
+  .warn b, .why b { color: #0e5a8a; } .warn b { color: #a04a24; }
+  .box { display: inline-block; width: 3.4mm; height: 3.4mm; border: 1.3px solid #55636f;
+         border-radius: 1px; vertical-align: -0.5mm; margin-right: 1.5mm; }
+  .pb { break-before: page; }
+  .keep { break-inside: avoid; }
+  /* 전체 루프 그림 */
+  .loop { display: grid; grid-template-columns: 1fr 24px 1fr 24px 1fr; gap: 4px 0;
+          margin: 8px 0 4px; break-inside: avoid; }
+  .loop .st { border: 1.4px solid #0e5a8a; border-radius: 6px; padding: 5px 8px; font-size: 8.8pt;
+              line-height: 1.45; background: #fff; }
+  .loop .st.dev { background: #eef5fa; }
+  .loop .st.air { background: #fdf6ec; border-color: #b4885a; }
+  .loop .st b { display: block; font-size: 9.2pt; }
+  .loop .st code { white-space: nowrap; }
+  .loop .ar { align-self: center; text-align: center; color: #0e5a8a; font-size: 13pt; }
+  .loop .dn { grid-column: 5; text-align: center; color: #0e5a8a; font-size: 13pt; line-height: 1; }
+  .loop .up { grid-column: 1; text-align: center; color: #0e5a8a; font-size: 13pt; line-height: 1; }
+  .legend { font-size: 8.4pt; color: #6b7885; margin-bottom: 6px; }
+  .legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+                vertical-align: -1px; margin: 0 3px 0 10px; }
+  /* 기록지 */
+  .sheet { border: 1.5px solid #55636f; border-radius: 6px; padding: 7px 10px 9px; margin: 8px 0;
+           break-inside: avoid; }
+  .sheet .row { display: flex; gap: 14px; margin: 2.5px 0; font-size: 9.3pt; flex-wrap: wrap; }
+  .fill { display: inline-block; border-bottom: 1px solid #8a97a3; min-width: 30mm; height: 5mm;
+          vertical-align: bottom; }
+  .fill.s { min-width: 14mm; } .fill.l { min-width: 62mm; }
+  .trans { height: 7.6mm; margin-top: 4.5mm; border-bottom: 1.1px solid #8a97a3;
+           background: repeating-linear-gradient(90deg, transparent 0, transparent 4.35mm,
+                       #dde3e8 4.35mm, #dde3e8 calc(4.35mm + 1px)); }
+  .trans.first { margin-top: 1.5mm; }
+  .cap { font-size: 8pt; color: #6b7885; }
+  .cut { border-top: 1.5px dashed #9aa6b1; margin: 10px 0 6px; position: relative; }
+  .cut::after { content: "✂ 여기부터 잘라 장비 옆에"; position: absolute; top: -8px; left: 8px;
+                background: #fff; font-size: 8pt; color: #6b7885; padding: 0 4px; }
+</style>
+</head>
+<body>
+
+<h1>signus 실데이터 CLI 검증 절차서</h1>
+<p class="sub">웹 UI 이전 단계 — 격리망 장비에서 <b>무엇을 치고, 무엇을 적어오는지</b></p>
+<p class="meta">발급 2026-08-06 · 이 절차서의 명령·출력 예시는 전부 개발기에서 실측한 것 ·
+기록지는 부록 A·B (필요한 만큼 복사) · 빠른 참조 카드는 부록 C</p>
+
+<div class="why"><b>이 종이의 목적.</b> 장비에서 CLI(<code>analyze</code>/<code>survey</code>)로
+실캡처를 돌려 보고, <b>이상한 결과만 최소 분량으로</b> 옮겨 와 Claude 와 코드를 고치는 반복
+루프를 돌린다. 설계 최우선 원칙은 <b>한 번의 방문에서 필요한 것을 다 얻어 오는 것</b>(두 번
+일하지 않기)이다. 잘 나온 결과는 체크 표시만 하고 옮기지 않는다.</div>
+
+<h2>전체 그림 — 한 바퀴가 이렇게 돈다</h2>
+<div class="legend">배경색: <span class="sw" style="background:#fdf6ec;border:1px solid #b4885a"></span>격리망 장비(손 필사)
+<span class="sw" style="background:#eef5fa;border:1px solid #0e5a8a"></span>개발기(맥, Claude 가 있는 쪽)</div>
+<div class="loop">
+  <div class="st air"><b>① 장비 — 분석</b>파일마다 <code>analyze --brief</code> 또는 <code>survey --brief</code></div>
+  <div class="ar">→</div>
+  <div class="st air"><b>② 기록지 작성</b>이상한 것만 sig2 줄 필사 + 기대/근거 메모</div>
+  <div class="ar">→</div>
+  <div class="st dev"><b>③ 맥 — 붙여넣기</b>기록지 내용을 그대로 채팅에</div>
+  <div class="up">↑</div><div></div><div></div><div></div><div class="dn">↓</div>
+  <div class="st air"><b>⑥ 장비 — 반영·재시험</b>변경분 필사 후 <b>표지의 재시험 목록</b>만 다시</div>
+  <div class="ar">←</div>
+  <div class="st dev"><b>⑤ 변경분 인쇄물</b>표지에 "재시험할 파일 + 기대 변화" 명시</div>
+  <div class="ar">←</div>
+  <div class="st dev"><b>④ Claude 작업</b>오타검증 → 합성 재현 → 수정 → pytest·sweep</div>
+</div>
+<p class="cap">⑥ 이 끝나면 다시 ② 로 — 재시험 결과와 신규 시험을 한 방문에 묶는다.</p>
+
+<h3>티키타카 3원칙 (양쪽 다 지킨다)</h3>
+<ul>
+<li><b>사용자는 본 그대로 옮긴다.</b> 이상해 보여도 값을 고치거나 "보정"하지 않는다 — 오타는
+검출 코드가 잡아 주고, 잘못 고친 값은 못 잡는다.</li>
+<li><b>Claude 는 받은 줄을 무조건 <code>brief.py check</code> 부터</b> 돌리고, 재현 없이 추측으로
+고치지 않는다. 불일치가 나면 고치기 전에 되묻는다.</li>
+<li><b>코드가 장비로 가는 길은 변경분 인쇄물뿐.</b> 재시험 대상과 기대 변화는 변경분 표지에
+적혀서 온다 — 그 목록만 다시 돌리면 된다.</li>
+</ul>
+
+<h2><span class="n">0</span>장비 가기 전 — 맥에서 5분</h2>
+<ul style="list-style:none; margin-left:2px">
+<li><span class="box"></span><b>장비 코드가 어느 인쇄본까지 반영됐는지</b> 기록지 머리에 적는다
+(예: "코드북 8/1판 + 변경분 8/5까지"). 결과 줄에는 리비전이 없어서(필사 분량 절약을 위해 뺀
+결정) 돌아오면 Claude 가 반드시 물어본다 — 미리 적으면 그 문답이 사라진다.</li>
+<li><span class="box"></span>밀린 변경분이 있으면 <b>필사부터 계획</b>한다. 검증은 항상 "인쇄물과
+같은 코드"에서 해야 결과를 해석할 수 있다.</li>
+<li><span class="box"></span>이 절차서 + 기록지(부록 A·B)를 인쇄한다. 기록지는 파일 수만큼.</li>
+<li><span class="box"></span>시험할 캡처를 <b>2단계 매트릭스</b>에서 유형별로 골라 둔다.
+첫 방문은 5~10개 권장 — 그 이상은 기록 오타율이 올라간다.</li>
+</ul>
+
+<h2><span class="n">1</span>장비 도착 — 제일 먼저 자가 점검 (1분)</h2>
+<p>필사해 둔 저장소 폴더(안에 <code>signus/</code> 가 있는 곳)에서:</p>
+<pre>python3 -c "from signus.cli import check_code; print(check_code('sig2 x an fs1 qpsk'))"</pre>
+<table>
+<tr><th style="width:24%">나온 값</th><th>뜻과 행동</th></tr>
+<tr><td><b><code>psmx</code></b></td><td>정상. 오늘 옮길 모든 줄의 <code>#검출코드</code> 를 믿을 수 있다. 그대로 진행.</td></tr>
+<tr><td>다른 네 글자</td><td><code>cli.py</code> 의 <code>check_code</code>/<code>_ALPHA</code> 부근 필사 오타.
+<b>분석은 그대로 진행</b>하되 기록지 머리 "자가점검" 칸에 나온 값을 적는다. 그날 모든 줄이
+불일치로 떠도 원인은 값이 아니라 코드 쪽이다 — Claude 가 해당 줄만 다시 인쇄해 준다.</td></tr>
+<tr><td>ImportError /<br>SyntaxError</td><td>그 파일 필사에 문법 오타. <b>에러 마지막 줄</b>(파일명·줄번호 포함)을 적어온다.</td></tr>
+</table>
+<div class="why"><b>명령 표기 약속.</b> 이 절차서의 <code>signus …</code> 는 장비에 명령이 등록돼
+있지 않으면 전부 <code>python3 -m signus.cli …</code> 로 바꿔 읽는다. 이하 예시는 짧은 쪽으로 쓴다.</div>
+
+<h2><span class="n">2</span>무엇을 시험하나 — 유형 매트릭스</h2>
+<p>"다양한 신호"를 계통적으로: <b>유형마다 최소 1개.</b> 오른쪽 끝이 "정상의 모습"이다 —
+이 모습이면 ✓ 만 하고 넘어간다.</p>
+<table>
+<tr><th style="width:4%">#</th><th style="width:25%">유형</th><th style="width:15%">명령</th>
+<th style="width:26%">확인하려는 것</th><th>정상의 모습</th></tr>
+<tr><td>1</td><td><b>제원을 아는 확실한 신호</b> (규격서 있는 것)</td><td>analyze</td>
+<td>파이프라인 기준선</td><td>변조·baud 일치, lock ≥ 60</td></tr>
+<tr><td>2</td><td>협대역 연속 디지털</td><td>analyze</td>
+<td>블라인드 탐지 전반</td><td>lock ≥ 60, 제원이 그럴듯</td></tr>
+<tr><td>3</td><td>버스트 / 패킷성</td><td>analyze (+<code>--burst N</code>)</td>
+<td>버스트 분리, 짧은 패킷</td><td>"버스트 N개 감지" 줄, 버스트별 복조</td></tr>
+<tr><td>4</td><td>FSK 계열</td><td>analyze</td>
+<td>정포락선 게이트</td><td>2fsk/4fsk/msk + <code>h</code> 값</td></tr>
+<tr><td>5</td><td>광대역 (한 파일에 여러 신호)</td><td>survey</td>
+<td>탐지 누락·분리</td><td>육안으로 보이는 신호 수 = <code>n</code></td></tr>
+<tr><td>6</td><td>아날로그 FM 음성 · 톤</td><td>analyze/survey</td>
+<td><b>거부가 정상</b>인지</td><td>"아날로그/톤" 분류 — 성상도 강제 없음은 설계다</td></tr>
+<tr><td>7</td><td>약한 신호</td><td>analyze</td>
+<td>정직한 저품질 보고</td><td>lock 낮게 나오되 크래시 없음</td></tr>
+</table>
+<div class="warn"><b>순서는 1번부터.</b> 기준선(제원 아는 신호)마저 이상하면 DSP 가 아니라
+읽기 설정(fs/dtype)이나 필사 쪽 문제일 공산이 크고, 그날 나머지 결과의 해석이 전부 달라진다.
+기준선 1~2개로 신뢰를 확보한 뒤 다양한 유형으로 넓힌다.</div>
+
+<h2><span class="n">3</span>파일 여는 법 — 읽기 필수 정보</h2>
+<p><b>fs(샘플레이트)와 iq/real 여부는 물리적으로 추정 불가능</b> — 반드시 밖에서 준다.
+정답(변조·fc·baud)은 주는 게 아니다. 사이드카에 있어도 분석기는 절대 안 읽는다(블라인드).</p>
+<ul>
+<li>파일명에 토큰이 있으면 그냥 연다:
+<code>&lt;이름&gt;.&lt;cplx|real&gt;.&lt;fs정수&gt;.&lt;샘플타입&gt;[.be][.bitrev][.rf&lt;Hz&gt;].pcm</code>
+&nbsp;예: <code>capture.cplx.2000000.16t.pcm</code></li>
+<li>임의 이름이면 플래그로: <code>signus analyze 캡처.bin --fs 2000000 --fmt iq --dtype i16 --brief</code></li>
+<li><code>ValueError: need fs + fmt</code> 가 뜨면 이 정보가 빠진 것이다 — 파일명을 고치거나 플래그를 준다.</li>
+<li>캡처의 RF 중심을 알면 <code>--rf &lt;Hz&gt;</code> — "실제 RF" 줄이 추가되고 survey 의 중심주파수가 절대값이 된다.</li>
+</ul>
+<table>
+<tr><th>파일명 표기</th><td><code>16t</code></td><td><code>8t</code></td><td><code>8o</code></td>
+<td><code>16o</code></td><td><code>32f</code></td><td><code>64f</code></td></tr>
+<tr><th>= <code>--dtype</code></th><td>i16</td><td>i8</td><td>u8</td><td>u16</td><td>f32</td><td>f64</td></tr>
+</table>
+
+<h2 class="pb"><span class="n">4</span>파일마다 이 순서로 — 핵심 절차</h2>
+<h3>4-1. 돌린다</h3>
+<pre>signus analyze &lt;파일&gt; --brief        # 단일 신호
+signus survey  &lt;파일&gt; --brief        # 광대역 (여러 신호가 한 파일에)</pre>
+<p>사람용 출력이 그대로 나오고, <b>맨 끝에 옮기기용 한 줄이 추가</b>된다:</p>
+<pre>sig2 an fs1000000 iq-i16 16qam fc8000 bd100000 lk100 mer29.8 rl0.33 <b>#vsej</b></pre>
+
+<h3>4-2. lock 을 보고 셋 중 하나로 판정한다</h3>
+<table>
+<tr><th style="width:26%">화면의 lock</th><th>판정과 행동</th></tr>
+<tr><td><b>lock ≥ 60, 기대와 일치</b></td><td>믿을 만한 복조. 기록지에 <b>✓ 와 "변조 lk__" 만</b> 적는다.
+sig2 줄 필사 불필요 — 잘 나온 결과는 안 가져온다.</td></tr>
+<tr><td><b>기대와 다름</b><br>(변조·fc·baud 어느 쪽이든)</td><td>마지막 <b>sig2 줄 전체를 필사</b>하고
+기대/근거를 메모한다. lock 이 높아도 필사한다 — "자신 있는 오답"이 제일 중요한 표본이다.</td></tr>
+<tr><td><b>lock 0~30</b><br>(특히 MER 음수, 롤오프 1.00)</td><td>십중팔구 샘플타입이 틀렸다.
+<b>그 자리에서 스캔</b> ↓</td></tr>
+</table>
+<pre>signus analyze &lt;파일&gt; --dtype i16 --brief     # 넷을 차례로: i16 → f32 → i8 → u8
+signus analyze &lt;파일&gt; --dtype f32 --brief     # 필요하면 각 조합에 --be 도 붙여 본다</pre>
+<p>lock 이 확 뛰는 조합이 나오면 <b>그 조합의 sig2 줄</b>을 필사하고 메모 칸에
+"스캔: i16→3, f32→88" 식으로 요약. 안 뛰면 "전 dtype 낮음" 한마디면 된다.</p>
+
+<h3>4-3. 조건부 표시를 체크박스로 옮긴다</h3>
+<p>사람용 출력에 뜰 때만 나오는 줄들 — 기록지의 해당 칸에 체크. (sig2 줄에도 실리지만
+체크는 필사 검증용 이중화다.)</p>
+<table>
+<tr><th style="width:18%">표시</th><th>뜻</th></tr>
+<tr><td>버스트 N개 감지</td><td>N 을 기록. 기본은 최강 버스트 분석 — 다른 것도 보려면 <code>--burst 2</code> (1부터)</td></tr>
+<tr><td><code>eq</code></td><td>등화기 적용 (다중경로 보정)</td></tr>
+<tr><td><code>al</code> / <code>fb</code></td><td>반송파 앨리어스 보정 / 심볼레이트 폴백</td></tr>
+<tr><td><code>amb</code></td><td><b>반송파 앨리어싱 가능 경고 — fc 를 그대로 믿지 말 것</b> (비트는 대개 멀쩡)</td></tr>
+<tr><td><code>pre</code></td><td>반복 프리앰블 동기로 복조됨</td></tr>
+</table>
+
+<h3>4-4. 필사 요령 (sig2 줄)</h3>
+<ul>
+<li><b>마지막 줄만</b>, <code>#</code> 뒤 네 글자까지. 공백 위치를 그대로 (공백이 밀리면 값이
+달라지는데, 그것도 검출 코드가 잡는다).</li>
+<li>survey 는 <b>신호마다 한 줄 + 맨 끝 #코드 한 번</b>. 13개 이상이면 "…N개 생략" 줄까지 그대로.</li>
+<li>검출 코드 알파벳에는 <b>o·i·l 이 없다</b> — o 처럼 보이면 0, i·l 처럼 보이면 1 이다.</li>
+<li>크래시가 나면 <b>예외의 마지막 줄만</b> 적는다.</li>
+</ul>
+
+<h2><span class="n">5</span>증상이 보이면 그 자리에서 하나만 더 — 두 번 안 가기</h2>
+<p>아래 증상이 그 자리에서 보이면, 돌아왔다 다시 가는 일이 없도록 <b>오른쪽 한 가지</b>를
+같이 적어온다. 전부 "치는 양"이 한 줄 이하가 되게 골라져 있다.</p>
+<table>
+<tr><th style="width:30%">증상</th><th style="width:42%">그 자리에서 하는 일</th><th>적어오는 것</th></tr>
+<tr><td>lock 은 높은데 변조가 기대와 다름</td><td>브라우저가 있으면 <code>signus serve</code> →
+<code>http://127.0.0.1:8000</code> 에 그 파일을 열어 성상도를 본다</td><td>점 덩어리 수 한마디<br>(예: "4덩어리 링1")</td></tr>
+<tr><td>심볼레이트가 배수로 의심<br>(×2, ×½ 등)</td><td><code>signus analyze &lt;파일&gt; --report r.json</code> 후<br>
+<code>python3 -c "import json; print(json.load(open('r.json'))['detected']['baud_conf'])"</code></td>
+<td>baud_conf 숫자 하나</td></tr>
+<tr><td>짧은 패킷이 안 잡힘</td><td>아는 대로</td><td>버스트 대략 길이(샘플) · 반복 주기 — 숫자 둘</td></tr>
+<tr><td>survey 가 신호를 놓침</td><td>아는 대로 (워터폴·계획표)</td><td>대략 주파수·대역폭 한마디 (예: "+2.3M 근처 200k")</td></tr>
+<tr><td>크래시</td><td>—</td><td>예외 마지막 줄</td></tr>
+</table>
+<div class="why"><b>사진이 가능하면 이 표는 잊는다.</b> 화면 사진 한 장이 위의 어떤 것보다 낫다 —
+찍을 수 있는 환경이면 사진으로.</div>
+
+<h2><span class="n">6</span>돌아와서 — Claude 에게 이렇게 준다</h2>
+<p>기록지를 이 형식으로 채팅에 옮긴다 (머리 두 줄 + 파일별 블록):</p>
+<pre>자가점검: psmx
+장비 코드: 코드북 8/1판 + 변경분 8/5까지
+
+[1] beacon433 — 기대: qpsk 32k 부근 / 근거: 규격서
+sig2 an fs2000000 iq-i16 qpsk fc11987 bd32001 lk91 mer24.0 rl0.35 #k2vw
+메모: 버스트 3개 감지, 최강만 분석
+
+[2] widecap — 기대: 신호 5개 / 근거: 워터폴 육안
+sig2 sv fs20000000 iq-i16 n4
+0 fc-6200000 bd200000 lk93 qpsk
+1 fc-1500000 bd400000 lk100 16qam
+2 fc3099983 bd150000 lk100 msk
+3 fc7400000 bd300000 lk93 8psk #7ckr
+메모: 누락 의심 +2.3M 근처 폭 200k
+
+[3] voicecap — 기대: FM 음성 / 근거: 육안
+✓ 아날로그 분류 (설계대로 거부)</pre>
+<p>✓ 만 한 파일도 위 [3] 처럼 <b>한 줄로 존재만 알려 주면</b> 유형 커버리지를 같이 확인할 수 있다.</p>
+<h3>그다음 일어나는 일 — Claude 쪽 약속</h3>
+<ol>
+<li>받은 줄마다 즉시 <code>tools/brief.py check</code>. <b>불일치면 고치지 않고 되묻는다</b> —
+그때는 종이 원본을 다시 봐 달라. (본문 오타인지 코드 네 글자 오타인지도 갈라서 알려준다.)</li>
+<li>아는 제원으로 <b>합성 재현</b>을 시도하고, 재현되면 <code>tests/</code> 에 잠그고 고친다 →
+<code>pytest</code> + <code>sweep --tier core</code> 로 정상 신호가 안 깨졌는지 확인.</li>
+<li>재현이 안 되면 그 사실을 먼저 말하고, 5단계 표에서 <b>딱 한 가지만</b> 더 요청한다.</li>
+<li>수정이 생기면 <b>변경분 인쇄물</b>을 발급하고, 표지에 <b>재시험 목록</b>
+("beacon433 — 기대: lock 30 → 60↑")을 명시한다. 다음 방문 때 그 목록과 신규 시험을 묶는다.</li>
+</ol>
+
+<h2><span class="n">7</span>웹 UI 단계로 넘어가는 기준</h2>
+<p>2단계 매트릭스의 7유형이 전부 <b>"기대대로"</b> 또는 <b>"문서화된 한계로 설명됨"</b>
+(예: π/4-DQPSK 는 qpsk 표시가 정상, 아날로그는 거부가 정상)이 되면 CLI 검증을 종료한다.
+그다음 같은 파일들을 웹 UI(<code>signus serve</code> — 애니메이션 성상도·워터폴·일괄 분석)로
+육안 확인하는 단계로 넘어간다.</p>
+
+<h2 class="pb">부록 A — analyze 기록지 <span style="font-weight:normal;font-size:9pt;color:#6b7885">(파일당 한 칸 · 필요한 만큼 복사)</span></h2>
+<div class="sheet">
+<div class="row"><span>자가점검(1단계): <span class="fill s"></span></span>
+<span>장비 코드: 코드북 <span class="fill s"></span> + 변경분 <span class="fill s"></span> 까지</span>
+<span>날짜: <span class="fill s"></span></span></div>
+</div>
+
+<div class="sheet">
+<div class="row"><span>파일: <span class="fill l"></span></span>
+<span>크기(같은 이름 재시험 때만): <span class="fill s"></span></span></div>
+<div class="row"><span>기대: <span class="fill l"></span></span>
+<span>근거: <span class="box"></span>규격서 <span class="box"></span>타도구 <span class="box"></span>육안 <span class="box"></span>없음(블라인드)</span></div>
+<div class="row"><span>플래그: --fs <span class="fill s"></span> --fmt <span class="fill s"></span> --dtype <span class="fill s"></span></span>
+<span><span class="box"></span>be <span class="box"></span>rf <span class="fill s"></span></span></div>
+<div class="row"><span>판정: <span class="box"></span>기대 일치 (변조 <span class="fill s"></span> lk <span class="fill s"></span>) — 여기서 끝</span>
+<span><span class="box"></span>이상 → 아래 필사</span> <span><span class="box"></span>크래시 → 마지막 줄을 아래에</span></div>
+<div class="row"><span>조건부: 버스트 N= <span class="fill s"></span></span>
+<span><span class="box"></span>eq <span class="box"></span>al <span class="box"></span>fb <span class="box"></span>amb <span class="box"></span>pre</span></div>
+<div class="trans first"></div><div class="trans"></div>
+<p class="cap">↑ sig2 줄 필사 (한 칸에 한 글자 · 공백도 한 칸 · # 뒤 네 글자까지)</p>
+<div class="row"><span>스캔/메모: <span class="fill" style="min-width:130mm"></span></span></div>
+</div>
+
+<div class="sheet">
+<div class="row"><span>파일: <span class="fill l"></span></span>
+<span>크기(같은 이름 재시험 때만): <span class="fill s"></span></span></div>
+<div class="row"><span>기대: <span class="fill l"></span></span>
+<span>근거: <span class="box"></span>규격서 <span class="box"></span>타도구 <span class="box"></span>육안 <span class="box"></span>없음(블라인드)</span></div>
+<div class="row"><span>플래그: --fs <span class="fill s"></span> --fmt <span class="fill s"></span> --dtype <span class="fill s"></span></span>
+<span><span class="box"></span>be <span class="box"></span>rf <span class="fill s"></span></span></div>
+<div class="row"><span>판정: <span class="box"></span>기대 일치 (변조 <span class="fill s"></span> lk <span class="fill s"></span>) — 여기서 끝</span>
+<span><span class="box"></span>이상 → 아래 필사</span> <span><span class="box"></span>크래시 → 마지막 줄을 아래에</span></div>
+<div class="row"><span>조건부: 버스트 N= <span class="fill s"></span></span>
+<span><span class="box"></span>eq <span class="box"></span>al <span class="box"></span>fb <span class="box"></span>amb <span class="box"></span>pre</span></div>
+<div class="trans first"></div><div class="trans"></div>
+<p class="cap">↑ sig2 줄 필사 (한 칸에 한 글자 · 공백도 한 칸 · # 뒤 네 글자까지)</p>
+<div class="row"><span>스캔/메모: <span class="fill" style="min-width:130mm"></span></span></div>
+</div>
+
+<div class="sheet">
+<div class="row"><span>파일: <span class="fill l"></span></span>
+<span>크기(같은 이름 재시험 때만): <span class="fill s"></span></span></div>
+<div class="row"><span>기대: <span class="fill l"></span></span>
+<span>근거: <span class="box"></span>규격서 <span class="box"></span>타도구 <span class="box"></span>육안 <span class="box"></span>없음(블라인드)</span></div>
+<div class="row"><span>플래그: --fs <span class="fill s"></span> --fmt <span class="fill s"></span> --dtype <span class="fill s"></span></span>
+<span><span class="box"></span>be <span class="box"></span>rf <span class="fill s"></span></span></div>
+<div class="row"><span>판정: <span class="box"></span>기대 일치 (변조 <span class="fill s"></span> lk <span class="fill s"></span>) — 여기서 끝</span>
+<span><span class="box"></span>이상 → 아래 필사</span> <span><span class="box"></span>크래시 → 마지막 줄을 아래에</span></div>
+<div class="row"><span>조건부: 버스트 N= <span class="fill s"></span></span>
+<span><span class="box"></span>eq <span class="box"></span>al <span class="box"></span>fb <span class="box"></span>amb <span class="box"></span>pre</span></div>
+<div class="trans first"></div><div class="trans"></div>
+<p class="cap">↑ sig2 줄 필사 (한 칸에 한 글자 · 공백도 한 칸 · # 뒤 네 글자까지)</p>
+<div class="row"><span>스캔/메모: <span class="fill" style="min-width:130mm"></span></span></div>
+</div>
+
+<h2 class="pb">부록 B — survey 기록지 <span style="font-weight:normal;font-size:9pt;color:#6b7885">(광대역 파일당 한 칸)</span></h2>
+<div class="sheet">
+<div class="row"><span>파일: <span class="fill l"></span></span>
+<span>기대 신호 수: <span class="fill s"></span></span>
+<span>근거: <span class="box"></span>워터폴 육안 <span class="box"></span>계획표 <span class="box"></span>없음</span></div>
+<div class="row"><span>플래그: --fs <span class="fill s"></span> --fmt <span class="fill s"></span> --dtype <span class="fill s"></span> --rf <span class="fill s"></span></span>
+<span>나온 <code>n</code> = <span class="fill s"></span></span></div>
+<div class="row"><span>판정: <span class="box"></span>수·제원 모두 기대대로 (✓ 만 하고 끝)</span>
+<span><span class="box"></span>이상 → 아래에 전 블록 필사 (신호마다 한 줄, 맨 끝 #코드)</span></div>
+<div class="trans first"></div><div class="trans"></div><div class="trans"></div>
+<div class="trans"></div><div class="trans"></div><div class="trans"></div>
+<p class="cap">↑ <code>sig2 sv …</code> 머리줄부터 마지막 <code>#코드</code> 줄까지</p>
+<div class="row"><span>누락 의심 (대략 주파수·폭): <span class="fill" style="min-width:100mm"></span></span></div>
+</div>
+
+<div class="sheet">
+<div class="row"><span>파일: <span class="fill l"></span></span>
+<span>기대 신호 수: <span class="fill s"></span></span>
+<span>근거: <span class="box"></span>워터폴 육안 <span class="box"></span>계획표 <span class="box"></span>없음</span></div>
+<div class="row"><span>플래그: --fs <span class="fill s"></span> --fmt <span class="fill s"></span> --dtype <span class="fill s"></span> --rf <span class="fill s"></span></span>
+<span>나온 <code>n</code> = <span class="fill s"></span></span></div>
+<div class="row"><span>판정: <span class="box"></span>수·제원 모두 기대대로 (✓ 만 하고 끝)</span>
+<span><span class="box"></span>이상 → 아래에 전 블록 필사 (신호마다 한 줄, 맨 끝 #코드)</span></div>
+<div class="trans first"></div><div class="trans"></div><div class="trans"></div>
+<div class="trans"></div><div class="trans"></div><div class="trans"></div>
+<p class="cap">↑ <code>sig2 sv …</code> 머리줄부터 마지막 <code>#코드</code> 줄까지</p>
+<div class="row"><span>누락 의심 (대략 주파수·폭): <span class="fill" style="min-width:100mm"></span></span></div>
+</div>
+
+<div class="cut"></div>
+
+<h2 style="border-top:none;padding-top:2px">부록 C — 빠른 참조 카드</h2>
+<h3>sig2 한 줄 읽는 법</h3>
+<pre>sig2 an fs1000000 iq-i16 16qam fc8000 bd100000 lk100 mer29.8 rl0.33 #vsej</pre>
+<table>
+<tr><th style="width:20%">토막</th><th>뜻</th></tr>
+<tr><td><code>an</code> / <code>sv</code></td><td>analyze / survey</td></tr>
+<tr><td><code>iq-i16</code></td><td>포맷-샘플타입 — <b>lock 0 의 1순위 용의자</b>라 항상 실린다</td></tr>
+<tr><td><code>fs fc bd</code></td><td>샘플레이트 · 반송파 · 심볼레이트 (Hz 정수)</td></tr>
+<tr><td><code>lk mer rl</code>/<code>h</code></td><td>lock(0~100) · MER(dB) · 롤오프 (FSK 는 변조지수 h)</td></tr>
+<tr><td><code>b2/5</code></td><td>버스트 5개 중 2번째 (하나면 안 나옴)</td></tr>
+<tr><td><code>eq al fb amb pre</code></td><td>등화기 · 앨리어스보정 · baud폴백 · 앨리어싱경고 · 프리앰블 (해당 시만)</td></tr>
+<tr><td><code>#vsej</code></td><td>오타 검출 코드 — 알파벳에 o·i·l 없음 (o→0, i·l→1 로 읽기)</td></tr>
+</table>
+<h3>판단 기준 세 줄</h3>
+<ul>
+<li><b>lock ≥ 60</b> 복조 신뢰 · <b>lock 0~30 + MER 음수 + 롤오프 1.00</b> = 샘플타입 오독 시그니처 → dtype 스캔.</li>
+<li><b>fc 만 이상 + <code>amb</code></b> → fc 는 원리상 fs/sym 모듈로만 결정 — 비트는 대개 멀쩡.</li>
+<li><b>π/4-DQPSK 가 qpsk 로</b> 나오는 것, <b>아날로그·톤·처프의 성상도 거부</b>는 설계된 동작.</li>
+</ul>
+<h3>자가점검 정상값</h3>
+<pre>python3 -c "from signus.cli import check_code; print(check_code('sig2 x an fs1 qpsk'))"   → psmx</pre>
+</body>
+</html>
