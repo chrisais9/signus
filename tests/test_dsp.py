@@ -72,6 +72,136 @@ def test_find_bursts_keeps_short_packet_in_long_record():
         (s, e, mid, pkt.size)
 
 
+def test_find_bursts_detects_short_strong_bursts():
+    # field case (65k-sample capture): a packet train of STRONG bursts shorter than the
+    # record-scaled min length was dropped entirely -> [(0, n)] fallback -> analyze ran on
+    # the whole record. The operator can SEE the bursts on a spectrogram; the detector must
+    # not be blinder than the operator. Min length must not scale past the smoothing width.
+    rng = np.random.default_rng(3)
+    n = 65006
+    x = 0.1 * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    truth = []
+    for k in range(10):
+        s = 3000 + k * 6000
+        x[s:s + 200] += np.exp(2j * np.pi * 0.11 * np.arange(200))
+        truth.append((s, s + 200))
+    bursts = dsp.find_bursts(x, 1e6)
+    assert bursts != [(0, n)], "strong 200-sample bursts fell back to whole-record"
+    hits = sum(any(bs <= s and e <= be for bs, be in bursts) for s, e in truth)
+    assert hits >= 8, (hits, bursts[:4])
+
+
+def test_find_bursts_detects_moderate_snr_bursts():
+    # field case: bursts clearly visible on a spectrogram but below the +10 dB above_hi bar
+    # (a 6 dB wideband burst sits ~7 dB over the smoothed floor) were invisible -> fallback.
+    rng = np.random.default_rng(5)
+    n = 65006
+    amp = 10 ** (-6 / 20)  # wideband snr 6 dB
+    x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) * amp / np.sqrt(2)
+    truth = []
+    for k in range(10):
+        s = 3000 + k * 6000
+        x[s:s + 1000] += np.exp(2j * np.pi * 0.11 * np.arange(1000))
+        truth.append((s, s + 1000))
+    bursts = dsp.find_bursts(x, 1e6)
+    assert bursts != [(0, n)], "6 dB bursts fell back to whole-record"
+    hits = sum(any(bs <= s + 100 and e - 100 <= be for bs, be in bursts) for s, e in truth)
+    assert hits >= 8, (hits, bursts[:4])
+
+
+def test_find_bursts_separates_close_bursts():
+    # field case: two distinct bursts with a clear noise gap (300 samples, ~5x the smoothing
+    # width) were merged by the record-scaled gap (n//200=325) into one span, so analyze
+    # demodulated burst+noise+burst. A visible noise gap means separate bursts.
+    rng = np.random.default_rng(7)
+    n = 65006
+    x = 0.1 * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    a, gap, blen = 20000, 300, 2000
+    x[a:a + blen] += np.exp(2j * np.pi * 0.11 * np.arange(blen))
+    b = a + blen + gap
+    x[b:b + blen] += np.exp(2j * np.pi * 0.13 * np.arange(blen))
+    bursts = dsp.find_bursts(x, 1e6)
+    inside = [bu for bu in bursts if bu[0] < b + blen and bu[1] > a]
+    assert len(inside) == 2, (inside, bursts)
+    (s1, e1), (s2, e2) = inside
+    assert e1 <= a + blen + gap and s2 >= a + blen, (inside)
+
+
+def test_find_bursts_marginal_contrast_does_not_fragment():
+    # adversarial find: a burst whose level sits BETWEEN the lo and hi bars (Otsu class
+    # separation ~0.40-0.43 decades) passed the separation guard but shattered into up to
+    # 7-8 fragments -- find_burst then picked a ~3k piece of a 20k burst, worse for demod
+    # than the old whole-record fallback. A detection that explains only a minority of the
+    # above-lo energy is not a detection; it must fall back (or return one covering burst).
+    rng = np.random.default_rng(6)
+    n = 40000
+    x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+    sig, _ = generate(GenParams(mod="qpsk", n_symbols=2000, snr=60, seed=1))
+    sig = sig / np.sqrt(np.mean(np.abs(sig) ** 2)) * 10 ** (1.9 / 20)
+    x[10000:10000 + sig.size] += sig
+    bursts = dsp.find_bursts(x, 1e6)
+    if bursts != [(0, n)]:
+        s, e = max(bursts, key=lambda b: b[1] - b[0])
+        cover = (min(e, 10000 + sig.size) - max(s, 10000)) / sig.size
+        assert cover >= 0.8, (bursts, cover)
+
+
+def test_find_bursts_partial_detection_survives_weak_siblings():
+    # regression (from the coverage guard's first form): a clean strong detection was thrown
+    # away because OTHER energy -- weak bursts between the lo and hi bars, never candidates --
+    # inflated the above-lo mass past the guard's denominator. Only energy that actually
+    # qualified as a candidate run may count against the detection.
+    def _qb(n_sym, seed, amp_db):
+        s, _ = generate(GenParams(mod="qpsk", n_symbols=n_sym, snr=60.0, seed=seed))
+        s = s / np.sqrt(np.mean(np.abs(s) ** 2))
+        return s * 10 ** (amp_db / 20)
+
+    rng = np.random.default_rng(31)
+    n = 60000
+    x = np.sqrt(0.5) * (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(complex)
+    b1, b2 = _qb(800, 5, 12.0), _qb(800, 6, 2.0)     # strong / weak-between-the-bars
+    x[15000:15000 + b1.size] += b1
+    s2 = 15000 + b1.size + 6000
+    x[s2:s2 + b2.size] += b2
+    bursts = dsp.find_bursts(x, 1e6)
+    assert bursts != [(0, n)], "guard threw away a clean strong detection"
+    assert any(s < 15200 and e > 15000 + b1.size - 200 for s, e in bursts), bursts
+
+
+def test_find_bursts_borderline_mlen_drops_keep_survivors():
+    # long record (win=300, mlen=428): 200-sample bursts smear into ~500-sample runs that sit
+    # right at the length gate, so noise jitter drops SOME of them. The coverage guard must
+    # not count those routine mlen drops as "silently discarded candidates" and throw away
+    # the survivors -- only spike-gate kills (suspicious content) justify the fallback.
+    rng = np.random.default_rng(0)
+    n = 300000
+    x = 10 ** (-9 / 20) * (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+    truth = []
+    for k in range(10):
+        s = 5000 + k * 23800
+        x[s:s + 200] += np.exp(2j * np.pi * 0.11 * np.arange(200))
+        truth.append((s, s + 200))
+    bursts = dsp.find_bursts(x, 1e6)
+    assert bursts != [(0, n)], "survivors were thrown away with the mlen-dropped runs"
+    hits = sum(any(bs <= s + 80 and e - 80 <= be for bs, be in bursts) for s, e in truth)
+    assert hits >= 4, (hits, bursts[:4])
+
+
+def test_find_bursts_impulse_killed_burst_falls_back_not_misselects():
+    # two emitters; an impulse inside the STRONG burst trips the spike gate and kills it.
+    # Returning only the weak burst would silently hand analyze() the wrong emitter -- the
+    # guard must notice that the gates discarded most of the candidate mass and fall back.
+    rng = np.random.default_rng(13)
+    n = 60000
+    x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+    x[10000:20000] += 10 ** (15 / 20) * np.exp(2j * np.pi * 0.11 * np.arange(10000))
+    x[40000:48000] += 10 ** (8 / 20) * np.exp(2j * np.pi * 0.13 * np.arange(8000))
+    x[15000] += 400 + 400j
+    bursts = dsp.find_bursts(x, 1e6)
+    weak_only = all(s >= 30000 for s, e in bursts) and bursts != [(0, n)]
+    assert not weak_only, bursts
+
+
 def test_find_bursts_rejects_impulse_transient_in_long_record():
     # regression from the mlen cap: capping the min burst length at 1024 let a SHORT high-energy
     # transient (an impulse smeared by the n//1000 smoother into a ~win-wide run) qualify as a
