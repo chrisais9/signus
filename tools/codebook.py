@@ -154,6 +154,12 @@ def segments_of(text: str, suffix: str) -> list[list[tuple[str, str]]]:
                 lines[-1].append((cls, part))
     while lines and not lines[-1]:
         lines.pop()
+    # pygments 는 파일 맨 앞의 개행들을 통째로 삼킨다 -- 그대로 두면 빈 첫 줄로 시작하는
+    # 파일의 모든 줄번호가 하나씩 밀리고 diff_rows 가 끝을 넘어 IndexError 로 죽는다.
+    lead = len(text) - len(text.lstrip("\n"))
+    short = len(split_lines(text)) - len(lines)
+    if short > 0:
+        lines = [[] for _ in range(min(short, lead))] + lines
     return lines
 
 

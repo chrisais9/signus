@@ -85,8 +85,21 @@ def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
     noise = lp[lp < thr]
     floor = noise.mean() if noise.size else lp.min()
 
-    above_hi = lp >= floor + 1.0  # 10 dB (power decade) over floor
-    above_lo = lp >= floor + 0.6  # 6 dB
+    # The Otsu floor is only a NOISE floor when the histogram really is bimodal. On a record
+    # with no noise stretch (a signal filling the capture, or pure noise) the split lands
+    # inside one mode and "floor" is just that mode's lower half -- the lowered bars below
+    # would then promote envelope jitter to micro-bursts (a 60k-sample 16qam multipath record
+    # yielded a 209-sample fragment). Class separation < 0.4 decades = no distinct floor.
+    sig = lp[lp >= thr]
+    if not sig.size or float(sig.mean() - floor) < 0.4:
+        return [(0, n)]
+
+    # Thresholds are on WIN-SMOOTHED log power, where the noise spread is ~0.054/sqrt(win/64)
+    # decades: +5 dB is already >9 sigma at the smallest window, so lowering the old +10/+6 dB
+    # bars costs no noise false alarms while making ~6 dB bursts (clearly visible on a
+    # spectrogram, invisible to the old bar) detectable.
+    above_hi = lp >= floor + 0.5  # 5 dB over floor
+    above_lo = lp >= floor + 0.3  # 3 dB
     dif = np.diff(above_lo.astype(np.int8))
     starts = list(np.where(dif == 1)[0] + 1)
     ends = list(np.where(dif == -1)[0] + 1)
@@ -98,14 +111,20 @@ def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
     if not runs:
         return [(0, n)]
 
-    gap = max(256, n // 200)            # merge gap heals intra-signal splits: proportional is fine
-    mlen = max(256, min(n // 200, 1024))  # ...but the MIN burst length must not scale with the
-    # record: a short packetized burst (preamble-sync target, ~1k samples) in a long capture was
-    # dropped by n//200 and the [(0,n)] fallback buried it in noise. 1024 keeps the blip filter
-    # for records up to ~200k while capping it where the packet population starts.
+    # BOTH gates are tied to the smoothing width, NOT the record length. Record-scaled gates
+    # (n//200) dropped a field capture's strong 200-sample packet train wholesale (65k record,
+    # mlen 325 -> [(0,n)] fallback) and merged bursts across visible noise gaps. The smoother
+    # widens a true burst of L samples into a ~L+win run and smears an impulse into a ~win run,
+    # so mlen = win + 128 passes any real burst >=~128 samples at EVERY record length while
+    # still length-dropping impulse smears (the _SPIKE_PAR shape test below stays as backstop).
+    gap = max(64, win)                  # a visible noise gap (> ~2*win true) = separate bursts
+    mlen = win + 128
     merged = [list(runs[0])]
     for s, e in runs[1:]:
-        if s - merged[-1][1] < gap:
+        # A real inter-burst gap returns to the noise floor; a marginal-level burst (between
+        # the lo and hi bars) dips just BELOW lo without ever reaching the floor and would
+        # otherwise shatter into fragments. Merge across any valley that stays off the floor.
+        if s - merged[-1][1] < gap or float(lp[merged[-1][1]:s].mean()) > floor + 0.15:
             merged[-1][1] = e
         else:
             merged.append([s, e])
@@ -114,14 +133,24 @@ def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
     # the real signal so analyze() auto-selects the blip. A modulated burst has a near-flat
     # envelope (raw peak/mean power ~ a few); an impulse smear is one spike over noise (ratio ~win).
     # Reject runs whose RAW power is spike-dominated -- this separates them by shape, at any length.
-    out = []
+    out, spiked = [], 0
     for s, e in merged:
         if e - s < mlen:
             continue
         seg = pw[s:e]
         if float(seg.max() / (seg.mean() + 1e-30)) > _SPIKE_PAR:
+            spiked += e - s
             continue
         out.append((int(s), int(e)))
+    # A detection must EXPLAIN the candidate mass the SPIKE gate threw away. If an impulse
+    # inside the strongest burst killed its run, returning the survivors would hand analyze()
+    # the wrong emitter -- fall back instead. Only spike kills count: mlen drops are the
+    # routine blip filter (borderline-short runs at a large win), and lo-only energy (weak
+    # siblings, a second signal between the bars) never qualified -- counting either of those
+    # threw away clean partial detections.
+    covered = sum(e - s for s, e in out)
+    if out and covered < 0.6 * (covered + spiked):
+        return [(0, n)]
     return out or [(0, n)]
 
 

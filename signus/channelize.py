@@ -1,4 +1,3 @@
-
 """Channel extraction: pull one detected emitter out of a wideband capture as a
 baseband stream, sized so the signal occupies ~1/4-1/3 of the reduced rate -- the
 empirically-validated sweet spot for the downstream blind estimators (fill the band

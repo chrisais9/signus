@@ -27,6 +27,18 @@ def _excluded() -> set[str]:
     return set(re.findall(r'"([^"]+)"', m.group(0)))
 
 
+def test_codebook_segments_keep_leading_blank_lines():
+    # pygments swallows a file's leading newlines: a file starting with a blank line shifted
+    # every printed line number by one and crashed the diff issuer (IndexError in diff_rows).
+    import pytest
+    pytest.importorskip("pygments")
+    sys.path.insert(0, str(ROOT / "tools"))
+    import codebook
+    segs = codebook.segments_of("\n\nx = 1\n", ".py")
+    assert len(segs) == 3, segs
+    assert segs[0] == [] and segs[1] == []
+
+
 def test_codebook_excludes_generator_and_grader():
     rels = _sections()
     assert len(rels) >= 20, rels                     # 목록 파싱 자체가 깨졌는지 먼저 본다
