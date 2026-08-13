@@ -28,6 +28,42 @@ def test_analytic_suppresses_negative_image():
     assert np.array_equal(dsp.analytic(z), z.astype(np.complex128))
 
 
+def test_cell_power_shapes_and_energy():
+    # 셀 전력 헬퍼: 모양이 맞고, 톤 하나가 정확히 한 빈 열(row)만 뜨겁게 한다
+    rng = np.random.default_rng(0)
+    x = (rng.standard_normal(8192) + 1j * rng.standard_normal(8192)) * 0.01
+    x += np.exp(2j * np.pi * 0.25 * np.arange(8192))     # fs/4 톤
+    P, hop, nper = dsp._cell_power(x, 1e6)
+    assert P.shape[0] == nper and hop == nper // 2
+    assert P.shape[1] == 1 + (x.size - nper) // hop
+    hot_bin = int(np.argmax(P.mean(axis=1)))
+    assert P.mean(axis=1)[hot_bin] > 100 * np.median(P.mean(axis=1))
+    # 짧은 레코드: nperseg가 자동으로 줄어 최소 1열은 나온다
+    P2, hop2, nper2 = dsp._cell_power(x[:300], 1e6)
+    assert nper2 <= 300 and P2.shape[1] >= 1
+
+
+def test_find_bursts_sees_narrowband_bursts_like_the_eye():
+    # the operator SEES these on a spectrogram (53% of cells lit, 2026-08-11 measurement):
+    # narrowband qpsk bursts at wideband 0 dB are +12 dB per CELL (fs/bw processing gain).
+    # wideband energy detection dilutes them to +3 dB -> invisible. cell detection must not.
+    rng = np.random.default_rng(2)
+    n = 65006
+    x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+    sig, _ = generate(GenParams(mod="qpsk", n_symbols=600, fs=1e6, baud=5e4,
+                                snr=60, fc=2e5, seed=1))
+    truth = []
+    for k in range(4):
+        s = 8000 + k * 14000
+        b = sig[k * 1500:(k + 1) * 1500]
+        x[s:s + 1500] += b / np.sqrt(np.mean(np.abs(b) ** 2))
+        truth.append((s, s + 1500))
+    bursts = dsp.find_bursts(x, 1e6)
+    assert bursts != [(0, n)], "narrowband bursts invisible (wideband dilution)"
+    hits = sum(any(bs <= s + 300 and e - 300 <= be for bs, be in bursts) for s, e in truth)
+    assert hits >= 3, (hits, bursts[:6])
+
+
 def test_find_burst_padded_and_fallbacks():
     p = GenParams(mod="qpsk", n_symbols=4000, snr=15, pad=0.5, seed=0)
     x = _front(p)
