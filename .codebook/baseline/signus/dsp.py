@@ -5,7 +5,7 @@ from fractions import Fraction
 
 import numpy as np
 from scipy.ndimage import uniform_filter1d
-from scipy.signal import hilbert, resample_poly, welch
+from scipy.signal import get_window, hilbert, resample_poly, stft, welch
 
 from ._accel import dd_carrier
 from .constellations import ideal_points
@@ -63,94 +63,138 @@ _SPIKE_PAR = 60.0  # raw peak-to-mean power above which a candidate run is an im
 #                    a ~win-wide run scores ~win (hundreds+). 60 clears every real mod with margin.
 
 
-def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
-    """Dual-threshold energy detector with an Otsu log-power floor; return every
-    merged burst in time order, or [(0, size)] when nothing stands out."""
-    n = x.size
-    win = max(64, n // 1000)
-    pw = np.abs(x) ** 2
-    ps = uniform_filter1d(pw, win)
-    lp = np.log10(ps + 1e-20)
-
-    # Otsu split of the log-power histogram: a floor that survives an 80%-full
-    # record because it is drawn from the (small) below-threshold noise class.
-    hist, edges = np.histogram(lp, bins=128)
+def _otsu(v: np.ndarray, bins: int = 128) -> float:
+    """Otsu split threshold of a 1-D value distribution (log powers, column scores)."""
+    hist, edges = np.histogram(v, bins=bins)
     centers = (edges[:-1] + edges[1:]) / 2
     w = np.cumsum(hist).astype(float)
     m = np.cumsum(hist * centers)
     mb = m / np.where(w > 0, w, 1)
     mf = (m[-1] - m) / np.where(w[-1] - w > 0, w[-1] - w, 1)
-    btw = w * (w[-1] - w) * (mb - mf) ** 2
-    thr = centers[int(np.argmax(btw))]
-    noise = lp[lp < thr]
-    floor = noise.mean() if noise.size else lp.min()
+    return float(centers[int(np.argmax(w * (w[-1] - w) * (mb - mf) ** 2))])
 
-    # The Otsu floor is only a NOISE floor when the histogram really is bimodal. On a record
-    # with no noise stretch (a signal filling the capture, or pure noise) the split lands
-    # inside one mode and "floor" is just that mode's lower half -- the lowered bars below
-    # would then promote envelope jitter to micro-bursts (a 60k-sample 16qam multipath record
-    # yielded a 209-sample fragment). Class separation < 0.4 decades = no distinct floor.
-    sig = lp[lp >= thr]
-    if not sig.size or float(sig.mean() - floor) < 0.4:
+
+def _cell_power(x: np.ndarray, fs: float, nperseg: int = 256) -> tuple[np.ndarray, int, int]:
+    """Waterfall cell power for detection: (P[fbin, col], hop, nperseg). nperseg
+    auto-shrinks on short records; shared core for find_bursts (and, later, survey)."""
+    nperseg = int(min(nperseg, max(64, 1 << int(np.log2(max(x.size // 2, 64))))))
+    hop = nperseg // 2
+    win = get_window("blackmanharris", nperseg)
+    _, _, z = stft(x, fs=fs, window=win, nperseg=nperseg, noverlap=nperseg - hop,
+                   return_onesided=False, boundary=None, padded=False)
+    return np.abs(z) ** 2, hop, nperseg
+
+
+def find_bursts(x: np.ndarray, fs: float) -> list[tuple[int, int]]:
+    """Waterfall (cell-level) burst detector. Per-bin noise floors give the same
+    narrowband processing gain the operator's eye gets on a spectrogram (a burst at
+    wideband 0 dB is +12 dB per cell when it occupies 1/16 of the band); column
+    scores then drive the run/merge/guard machinery on the time axis.
+    Returns bursts in time order, or [(0, size)] when nothing stands out."""
+    n = x.size
+    pw = np.abs(x) ** 2
+    # A burst is a TIME-ENERGY event. A continuous signal that merely shuffles its spectrum
+    # (multi-tone FSK) lights different cells per column and once shattered into 78 phantom
+    # bursts -- but its wideband envelope is FLAT. Envelope Otsu separation measured 0.014-
+    # 0.052 decades on continuous FSK vs >=0.30 on every real burst regime: nothing turns
+    # on or off -> the whole record is the burst.
+    lp = np.log10(uniform_filter1d(pw, max(64, n // 1000)) + 1e-20)
+    e_thr = _otsu(lp)
+    e_lo, e_hi = lp[lp < e_thr], lp[lp >= e_thr]
+    if not e_lo.size or not e_hi.size or float(e_hi.mean() - e_lo.mean()) < 0.12:
         return [(0, n)]
-
-    # Thresholds are on WIN-SMOOTHED log power, where the noise spread is ~0.054/sqrt(win/64)
-    # decades: +5 dB is already >9 sigma at the smallest window, so lowering the old +10/+6 dB
-    # bars costs no noise false alarms while making ~6 dB bursts (clearly visible on a
-    # spectrogram, invisible to the old bar) detectable.
-    above_hi = lp >= floor + 0.5  # 5 dB over floor
-    above_lo = lp >= floor + 0.3  # 3 dB
+    # nperseg 128: bin 7.8 kHz keeps the narrowband gain for real signal widths while the
+    # 64-sample hop resolves inter-burst gaps down to ~200 samples (256 could not split a
+    # 300-sample gap -- no column fits inside it).
+    P, hop, nperseg = _cell_power(x, fs, nperseg=128)
+    if P.shape[1] < 4:                   # too few columns to tell bursts from record
+        return [(0, n)]
+    # Per-bin floor at a LOW percentile: tracks coloured noise bin by bin and stays on the
+    # noise even when a bin is signal-occupied up to ~90% of the time (high-duty trains).
+    # A record-filling signal owns its bins' floors entirely -> flat score -> [(0, n)].
+    floor_f = np.percentile(P, 10, axis=1)[:, None]
+    r = P / (floor_f + 1e-30)
+    k = max(3, P.shape[0] // 16)
+    sc = np.log10(np.sort(r, axis=0)[-k:].mean(axis=0) + 1e-30)  # column score (decades)
+    # A single noise column can spike +0.53 decades over base -- OVERLAPPING the weakest
+    # real bursts (+0.57). Like the eye, the discriminator is PERSISTENCE, not height: a
+    # 3-column smooth drops the noise worst-case to 0.31-0.33 while a real burst (>=3
+    # columns) keeps its level (0.56+) -- the gap the fixed bars below live in.
+    sc = uniform_filter1d(sc, 3)
+    # The noise base is the LOWEST MODE of the score histogram (Otsu, as the wideband
+    # version proved out): fixed quantile anchors cannot serve every duty regime, and
+    # spread ESTIMATES broke three ways (median blind >50% duty, two-sided MAD inflated by
+    # skirts, one-sided by the score's left tail). The margins are FIXED instead: a noise
+    # column's score is distribution-pinned at C = log10((ln(nbins/k)+1)/0.105) whatever
+    # the noise level, so its fluctuation is a constant of (nbins, k) -- measured worst
+    # 0.33 over 24 noise records vs 0.56 for the weakest keeper burst.
+    thr = _otsu(sc, bins=64)
+    quiet = sc[sc < thr]
+    if not quiet.size:
+        return [(0, n)]
+    base = float(np.median(quiet))
+    # No noise-quiet column at all (base far above the pinned C): a continuous signal
+    # shuffling its spectrum (a 4-tone FSK read as 78 phantom bursts before this guard).
+    c_noise = float(np.log10((np.log(P.shape[0] / k) + 1) / 0.105))
+    if base > c_noise + 0.25:
+        return [(0, n)]
+    hi = base + 0.45
+    lo = base + 0.25
+    above_lo = sc >= lo
     dif = np.diff(above_lo.astype(np.int8))
     starts = list(np.where(dif == 1)[0] + 1)
     ends = list(np.where(dif == -1)[0] + 1)
     if above_lo[0]:
         starts.insert(0, 0)
     if above_lo[-1]:
-        ends.append(n)
-    runs = [(s, e) for s, e in zip(starts, ends, strict=True) if above_hi[s:e].any()]
+        ends.append(sc.size)
+    runs = [(s, e) for s, e in zip(starts, ends, strict=True) if (sc[s:e] >= hi).any()]
     if not runs:
         return [(0, n)]
-
-    # BOTH gates are tied to the smoothing width, NOT the record length. Record-scaled gates
-    # (n//200) dropped a field capture's strong 200-sample packet train wholesale (65k record,
-    # mlen 325 -> [(0,n)] fallback) and merged bursts across visible noise gaps. The smoother
-    # widens a true burst of L samples into a ~L+win run and smears an impulse into a ~win run,
-    # so mlen = win + 128 passes any real burst >=~128 samples at EVERY record length while
-    # still length-dropping impulse smears (the _SPIKE_PAR shape test below stays as backstop).
-    gap = max(64, win)                  # a visible noise gap (> ~2*win true) = separate bursts
-    mlen = win + 128
     merged = [list(runs[0])]
     for s, e in runs[1:]:
-        # A real inter-burst gap returns to the noise floor; a marginal-level burst (between
-        # the lo and hi bars) dips just BELOW lo without ever reaching the floor and would
-        # otherwise shatter into fragments. Merge across any valley that stays off the floor.
-        if s - merged[-1][1] < gap or float(lp[merged[-1][1]:s].mean()) > floor + 0.15:
+        # A real inter-burst gap returns to the score base; a marginal-level burst dips just
+        # below lo without reaching it and would otherwise shatter into fragments. Merge
+        # across any valley whose median stays off the base.
+        valley = sc[merged[-1][1]:s]
+        if s - merged[-1][1] < 2 or float(np.median(valley)) > base + 0.12:
             merged[-1][1] = e
         else:
             merged.append([s, e])
-    # The mlen cap alone lets a short high-energy transient survive in a long record: the smoother
-    # spreads a single impulse into a ~win-wide run that clears 1024, and its energy can outrank
-    # the real signal so analyze() auto-selects the blip. A modulated burst has a near-flat
-    # envelope (raw peak/mean power ~ a few); an impulse smear is one spike over noise (ratio ~win).
-    # Reject runs whose RAW power is spike-dominated -- this separates them by shape, at any length.
+    # Shape gate: a modulated burst has a near-flat raw envelope (peak/mean ~ a few); an
+    # impulse smear is one spike over noise (ratio ~span). Reject spike-dominated candidates.
     out, spiked = [], 0
-    for s, e in merged:
-        if e - s < mlen:
+    for c0, c1 in merged:
+        if c1 - c0 < 2:                  # single-column flicker (noise / impulse smear)
             continue
+        s, e = max(0, c0 * hop), min(n, (c1 - 1) * hop + nperseg)
+        if c1 - c0 >= 6:
+            # long bursts: trim one hop of smear/quantization slack per edge. The noise
+            # tail otherwise fed to the demod sits on a knife edge for dense QAM (58 extra
+            # leading samples flipped a 16qam@24dB slice to 64qam lock 18). Short runs keep
+            # their full span -- trimming there would eat into the burst itself.
+            s, e = s + hop, e - hop
         seg = pw[s:e]
         if float(seg.max() / (seg.mean() + 1e-30)) > _SPIKE_PAR:
             spiked += e - s
             continue
         out.append((int(s), int(e)))
     # A detection must EXPLAIN the candidate mass the SPIKE gate threw away. If an impulse
-    # inside the strongest burst killed its run, returning the survivors would hand analyze()
-    # the wrong emitter -- fall back instead. Only spike kills count: mlen drops are the
-    # routine blip filter (borderline-short runs at a large win), and lo-only energy (weak
-    # siblings, a second signal between the bars) never qualified -- counting either of those
-    # threw away clean partial detections.
+    # inside the strongest burst killed its candidate, returning the survivors would hand
+    # analyze() the wrong emitter -- fall back instead. Only spike kills count: the
+    # single-column drops above are routine flicker filtering.
     covered = sum(e - s for s, e in out)
     if out and covered < 0.6 * (covered + spiked):
         return [(0, n)]
+    # A continuous signal OWNS its bins' floors and is invisible to the cell path -- but its
+    # edge transients are not, and once returned [(0, 192)] for a 64k channel whose 16qam
+    # ran the whole record. If the detections cover almost none of the envelope's high-power
+    # mass, the cell path missed the main event: return the ENVELOPE's high span instead
+    # (not the raw record -- a dead tail fed to the demod flipped that 16qam to 64qam).
+    # 0.1 keeps partial detections (a strong burst next to a lo-only sibling covers ~30%).
+    if out and covered < 0.1 * int((lp >= e_thr).sum()):
+        idx = np.where(lp >= e_thr)[0]
+        return [(int(idx[0]), int(idx[-1]) + 1)]
     return out or [(0, n)]
 
 
