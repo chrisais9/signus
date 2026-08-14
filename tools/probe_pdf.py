@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import codebook as cb  # noqa: E402
+import plotref  # noqa: E402
 
 SRC = cb.ROOT / "tools" / "sigc_probe.py"
 OUT = cb.DOCS / "signus-관찰프로브-sigc-필사용.pdf"
@@ -49,6 +50,19 @@ def steps_table(kat: str) -> list[tuple[str, str, str, str]]:
     ]
 
 EXTRA_CSS = """<style>
+  /* 참고편 — 모든 행이 정확히 12pt 여야 60행/쪽 계산이 맞는다 */
+  .refg { display: grid; grid-template-columns: 1fr; font-size: 8.5pt; line-height: 12pt;
+          flex: none; }
+  .refg > div { line-height: 12pt; overflow: hidden; white-space: pre; }
+  /* 그림은 100칸 + 문턱 라벨까지 한 줄에 들어가야 한다 — 8.2pt 면 라벨이 잘렸다 */
+  .ra { font-family: Menlo, monospace; font-size: 7.6pt; color: #111; }
+  .rp, .rq, .rh1, .rh2, .rh3 { font-family: "Apple SD Gothic Neo", sans-serif; }
+  .rp { font-size: 8.6pt; color: #111; }
+  .rq { font-size: 8pt; color: #666; }
+  .rh1 { font-size: 13pt; font-weight: 700; box-shadow: inset 0 -1px 0 #111; }
+  .rh2 { font-size: 10.5pt; font-weight: 700; background: #e6e6e6; padding-left: 3pt;
+         box-shadow: inset 0 1px 0 #888; }
+  .rh3 { font-size: 8.8pt; font-weight: 700; color: #222; }
   .steps { margin-top: 10pt; }
   .srow { display: grid; grid-template-columns: 34pt 108pt 1fr 1fr; align-items: baseline;
           font-family: "Apple SD Gothic Neo", sans-serif; font-size: 8pt; line-height: 13.5pt;
@@ -155,8 +169,30 @@ def build() -> str:
         pages.append(cb.page_html(
             "sigc.py", f"관찰 프로브 &#160;·&#160; {span} &#160;·&#160; {idx}/{len(chunks)}",
             f'<div class="grid">\n{body}\n</div>', idx + 1))
+    pages += reference_pages(len(chunks) + 2)
     return cb.SHELL.replace("%%TITLE%%", "signus 관찰 프로브 필사용") \
                    .replace("%%BODY%%", cover + "\n" + "\n".join(pages))
+
+
+def reference_pages(first_page: int) -> list[str]:
+    """참고편 — 합성 신호 6종의 단계 2/4/5 실행 결과 + 읽는 법. 필사 대상이 아니다."""
+    rows, flow = plotref.rows(), []
+    for cls, text in rows:
+        if cls == "rpage":                      # 시나리오는 새 쪽에서 시작
+            while len(flow) % cb.LINES_PER_PAGE:
+                flow.append(("rb", ""))
+            continue
+        flow.append((cls, text))
+    out, chunks, title = [], cb.paginate(flow), "참고편"
+    for i, chunk in enumerate(chunks):
+        body = "\n".join(f'<div class="{c}">{cb.esc(t) if t else "&#160;"}</div>'
+                         for c, t in chunk)
+        head = next((t for c, t in chunk if c == "rh2"), None)
+        title = head or (title + " (이어서)" if not title.endswith("(이어서)") else title)
+        out.append(cb.page_html(
+            title, f"참고편 — 그림 읽는 법 &#160;·&#160; {i + 1}/{len(chunks)}",
+            f'<div class="refg">\n{body}\n</div>', first_page + i))
+    return out
 
 
 if __name__ == "__main__":
