@@ -120,7 +120,9 @@ def build() -> str:
     (matplotlib 이 있고 창을 띄울 수 있으면 그림 — ssh/무화면이면 자동으로 ASCII)</div>
   <div class="usage">
     ① 이 코드를 <span class="mono">signus/</span> 폴더 <b>옆에</b>
-       <span class="mono">sigc.py</span> 로 저장한다.<br>
+       <span class="mono">sigc.py</span> 로 저장한다. <b>필사는 두 토막으로 끊어도 된다</b> —
+       「여기부터는 그림 단계」 주석 <b>앞</b>까지만 옮기면 ②③(요약 4줄)이 다 돌고,
+       그 뒤는 ④의 그림 단계 전용이다.<br>
     ② <span class="mono">python3 sigc.py kat</span> — 아래 기대 4줄과 <b>글자까지</b> 비교.
        다르면 스크립트 필사 오타다 (kat 이 잡아준다).<br>
     ③ <span class="mono">python3 sigc.py &lt;캡처파일&gt;</span> — 요약 4줄을 <b>#코드까지</b>
