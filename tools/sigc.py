@@ -70,6 +70,11 @@ def interpret(doc: dict[str, dict[str, int]]) -> None:
           f"→보정 {(c['gp'] + 3) * hop}샘플{gp_note}  점수 {c['sb']}dB  스파이크런 {c['sk']}")
     q = "" if d["q"] == 999 else \
         f"  부 방사체 {d['q'] * khz:+.1f}kHz (듀티 {d['qd']}%, {d['qs']}dB)"
+    if not a.get("iq", 1) and d["kb"] >= nb // 2 - 2:
+        # real 은 해석신호라 음수 반쪽이 비어 있다. 바닥을 전 빈에서 잡으면 g 가 0 으로 내려가
+        # 양수 반쪽 전체가 '점유' 로 읽힌다 — 프로브의 g 줄(fl if cx else fl[:nb//2]) 필사 의심.
+        print(f"주의: real 캡처인데 점유빈 {d['kb']}개(밴드 절반) — 프로브의 g 줄 필사를"
+              " 먼저 확인할 것. 그게 맞다면 수신기 잡음이 버스트와 함께 게이팅된 캡처다.")
     print(f"방사체: 주 {d['p'] * khz:+.1f}kHz (듀티 {d['pd']}%, {d['ps']}dB){q}"
           f"  점유빈 {d['kb']}·연속점유 {d['kc']}·최대폭 {d['w']}빈≈{d['w'] * khz:.1f}kHz\n")
     if a["ev"] < 12:
@@ -80,9 +85,9 @@ def interpret(doc: dict[str, dict[str, int]]) -> None:
                   " 단계 2 로 원시 곡선을 확인할 것.")
         if d["kc"] > 0:
             note = ""
-            if not a.get("iq", 1) or a["dc"] >= 10:
-                note = (" — 단 real 포맷이거나 dc≥10 이면 kc 는 위로 치우친다(실측):"
-                        " kc 단독으로 연속 방사체를 단정하지 말 것")
+            if a["dc"] >= 10:
+                note = (f" — 단 dc {a['dc']}% 라 DC 빈이 연속 방사체로 읽혔을 수 있다:"
+                        " 단계 3 으로 그 띠가 정말 대역 안에 있는지 볼 것")
             print(f"  원인 후보: 연속 방사체가 빈 {d['kc']}개를 계속 점유해 광대역 포락선을"
                   f" 평평하게 만든다 (합성 테스트에 없던 특징){note}.")
         if a["ed"] >= 90:

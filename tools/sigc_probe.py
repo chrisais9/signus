@@ -87,7 +87,8 @@ if arg == "kat":
 else:
     x0, meta = sigio.read(arg)
     fs = meta.fs
-raw = np.abs(np.asarray([x0.real, x0.imag])).max(0) if np.iscomplexobj(x0) else np.abs(x0)
+cx = np.iscomplexobj(x0)
+raw = np.abs(np.asarray([x0.real, x0.imag])).max(0) if cx else np.abs(x0)
 cp = float((raw > 0.98).mean())
 x = dsp.analytic(x0)
 n, pw = x.size, np.abs(x) ** 2
@@ -119,7 +120,8 @@ segs = [pw[max(0, s * hop):min(n, (e - 1) * hop + nper)] for s, e in rr]
 sk = sum(float(sg.max() / (sg.mean() + 1e-30)) > 60.0 for sg in segs)
 gp_ = np.array([rr[i + 1][0] - rr[i][1] for i in range(len(rr) - 1)])
 sb = round(10 * float(np.median([sc[s:e].max() for s, e in rr]) - base)) if rr else 0
-g = float(np.median(fl) + 1e-30)
+g = float(np.median(fl if cx else fl[:nb // 2]) + 1e-30)   # real 은 해석신호라 음수 반쪽이
+#   비어 있다: 전 빈 중앙값을 쓰면 바닥이 0 으로 내려가 밴드 절반이 '점유'로 읽힌다(실측)
 Ps, fls = np.fft.fftshift(P, 0), np.fft.fftshift(fl)
 du = (Ps > 40 * g).mean(1)
 occ = du > 0.1
@@ -136,7 +138,7 @@ qo, qd, qs = (q2 - nb // 2, round(100 * float(du[q2])),
               round(10 * np.log10(m2[q2] + 1e-30))) if m2[q2] > 0 else (999, 0, 0)
 la = (f"sigc a n{n} f{fs:.0f} ev{round(100 * ev)} ed{round(100 * ed)}"
       f" sp{round(float(sp))} dc{round(100 * dc)} cp{round(1000 * cp)}"
-      f" iq{int(np.iscomplexobj(x0))}")
+      f" iq{int(cx)}")
 lb = (f"sigc b c{nc} g{nb} b{round(100 * base)} cn{round(100 * cn)}"
       f" t{round(100 * thr)} m{round(100 * float(sc.max()))}"
       f" lo{round(100 * (lov - base))} hi{round(100 * (hiv - base))}")
