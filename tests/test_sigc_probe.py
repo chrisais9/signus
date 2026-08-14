@@ -208,6 +208,34 @@ def test_check_accepts_valid_block_and_names_the_exit(cont_plus_burst):
     assert verdict.count("일치") >= 4
     assert "베토" in verdict            # E1 이 (0,n) 의 범인이라고 짚는다
 
+def test_check_recovers_a_visually_confused_code_char():
+    """장비 화면의 #sy67 이 채팅에서 #syb7 로 옮겨진 실사고(2026-08-14): 코드 알파벳 안의
+    시각 혼동쌍(6↔b 등)은 한 글자 뒤집혀도 유효한 코드라, check 가 쌍 치환을 시험해
+    '본문 정상·코드 오독' 으로 짚어야 한다 — 불일치로 세우면 멀쩡한 회신으로 수사가 멈춘다."""
+    _, out = _run(PROBE, ["kat"])
+    lines = out.strip().splitlines()
+    conf = {"6": "b", "b": "6", "5": "s", "s": "5", "7": "1", "1": "7",
+            "y": "v", "v": "y", "g": "q", "q": "g"}
+    idx, code = next((i, ln[-4:]) for i, ln in enumerate(lines)
+                     if any(ch in conf for ch in ln[-4:]))
+    j = next(j for j, ch in enumerate(code) if ch in conf)
+    lines[idx] = lines[idx][:-4] + code[:j] + conf[code[j]] + code[j + 1:]
+    rc, verdict = _run(TOOL, ["check"], stdin="\n".join(lines))
+    assert rc == 0 and "오독" in verdict and "일치" in verdict
+
+
+def test_check_names_an_unknown_key_instead_of_crashing():
+    """장비 f-문자열 키 오타(실측: pd{ 를 pdb{ 로 침)는 검출 코드로는 정상이라 키 검증에서
+    잡아야 한다 — 없으면 해석기가 KeyError 로 죽는다."""
+    _, out = _run(PROBE, ["kat"])
+    lines = out.strip().splitlines()
+    body = lines[3].rsplit(" #", 1)[0].replace(" pd", " pdb")
+    lines[3] = f"{body} #{check_code(body)}"
+    rc, verdict = _run(TOOL, ["check"], stdin="\n".join(lines))
+    assert rc == 2 and "pdb" in verdict and "오타로 보임" in verdict
+    assert "Traceback" not in verdict
+
+
 def test_check_localizes_a_typo_to_its_line(burst_train):
     _, out = _run(PROBE, [str(burst_train[0])])
     lines = out.strip().splitlines()

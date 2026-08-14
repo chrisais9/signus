@@ -33,9 +33,16 @@ except ModuleNotFoundError:                 # 시스템 파이썬엔 numpy 가 �
     raise
 
 
-def parse(text: str) -> tuple[dict[str, dict[str, int]], list[str]]:
-    """받아친 블록 -> ({줄: {키: 값}}, 문제 목록). 줄마다 검출 코드를 대조한다."""
-    doc, bad = {}, []
+# 코드 알파벳 안에서 화면→종이→채팅 손 전달 때 서로 오독되는 쌍. brief.py 의 o/i/l 복원과
+# 같은 원리인데, 이쪽은 양쪽 다 유효한 코드 글자라 배제할 수 없어 쌍으로 시험한다.
+# (실측 2026-08-14: 장비 화면의 #sy67 이 채팅에서 #syb7 로 옮겨졌다 — 6↔b)
+_CONFUSE = {"6": "b", "b": "6", "5": "s", "s": "5", "7": "1", "1": "7",
+            "y": "v", "v": "y", "g": "q", "q": "g"}
+
+
+def parse(text: str) -> tuple[dict[str, dict[str, int]], list[str], list[str]]:
+    """받아친 블록 -> ({줄: {키: 값}}, 문제 목록, 참고 목록). 줄마다 검출 코드를 대조한다."""
+    doc, bad, notes = {}, [], []
     for raw in text.strip().splitlines():
         ln = re.sub(r"\s+", " ", raw).strip()   # check_code 와 같은 잣대로 공백을 접는다 --
         if not ln.startswith("sigc"):           # 안 그러면 'sigc  a' 를 "코드 없음" 이라고
@@ -47,12 +54,20 @@ def parse(text: str) -> tuple[dict[str, dict[str, int]], list[str]]:
         body, tag, got = m.group(1).rstrip(), m.group(2), m.group(3)
         want = check_code(body)
         if want != got:
-            near = sum(a != b for a, b in zip(want, got, strict=True)) == 1
-            hint = "코드 네 글자 쪽 오타일 공산" if near else "숫자 자릿수부터 재확인"
-            bad.append(f"sigc {tag} 불일치 ✗  받은 코드 #{got}, 계산 #{want} ({hint})")
-            continue
+            # 코드 한 글자가 시각 혼동쌍으로 뒤집힌 것이면 본문은 정상이다 — 그 경우까지
+            # "불일치" 로 세우면 멀쩡한 회신으로 수사를 멈추게 된다.
+            fix = next((i for i, ch in enumerate(got)
+                        if got[:i] + _CONFUSE.get(ch, ch) + got[i + 1:] == want), None)
+            if fix is not None:
+                notes.append(f"sigc {tag}: 받은 코드 #{got} 의 '{got[fix]}' 는 화면의"
+                             f" '{_CONFUSE[got[fix]]}' 오독 — 본문 일치 ✓ (#{want})")
+            else:
+                near = sum(a != b for a, b in zip(want, got, strict=True)) == 1
+                hint = "코드 네 글자 쪽 오타일 공산" if near else "숫자 자릿수부터 재확인"
+                bad.append(f"sigc {tag} 불일치 ✗  받은 코드 #{got}, 계산 #{want} ({hint})")
+                continue
         doc[tag] = {k: int(v) for k, v in re.findall(r"([a-z]+)(-?\d+)", body[7:])}
-    return doc, bad
+    return doc, bad, notes
 
 
 def interpret(doc: dict[str, dict[str, int]]) -> None:
@@ -227,10 +242,10 @@ def main() -> int:
     ap.add_argument("cmd", choices=("check", "gen"))
     ap.add_argument("--out", type=Path, help="gen: 합성 변형을 쓸 디렉터리")
     args = ap.parse_args()
-    doc, bad = parse(sys.stdin.read())
+    doc, bad, notes = parse(sys.stdin.read())
     for tag in sorted(doc):
         print(f"일치 ✓  sigc {tag}")
-    for msg in bad:
+    for msg in notes + bad:
         print(msg)
     if bad:
         print("→ 고치기 전에 그 줄을 다시 봐주세요 (잘못 옮겨진 숫자로 수사를 시작하지 않는다).")
@@ -239,6 +254,22 @@ def main() -> int:
         miss = [t for t in "abcd" if t not in doc]
         print(f"누락: {', '.join('sigc ' + t for t in miss)} — 4줄을 모두 받아쳐 주세요.")
         return 2
+    # 키 이름까지 검증한다: 장비 f-문자열의 키 오타(실측 2026-08-14: pd{ 를 pdb{ 로 침)는
+    # 검출 코드로는 정상이라 여기서 잡아야 한다 — 안 잡으면 해석기가 KeyError 로 죽는다.
+    req = {"a": "n f ev ed sp dc cp", "b": "c g b cn t m", "c": "r dn gp sb av ah sk",
+           "d": "kb kc w p pd ps q qd qs"}
+    opt = {"a": {"cx"}, "b": {"dlo", "dhi"}, "c": set(), "d": set()}
+    for tag, keys in req.items():
+        missing = set(keys.split()) - set(doc[tag])
+        extra = set(doc[tag]) - set(keys.split()) - opt[tag]
+        if missing or extra:
+            pair = next((f" — '{e}' 는 '{m}' 키의 오타로 보임 (프로브 그 줄의 f-문자열 필사"
+                         " 확인)" for e in sorted(extra) for m in sorted(missing)
+                        if e.startswith(m) or m.startswith(e)), "")
+            print(f"sigc {tag} 키 이상: "
+                  + (f"빠짐 {sorted(missing)} " if missing else "")
+                  + (f"모르는 키 {sorted(extra)}" if extra else "") + pair)
+            return 2
     if args.cmd == "check":
         interpret(doc)
         return 0
