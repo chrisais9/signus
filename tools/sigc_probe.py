@@ -11,12 +11,6 @@ from scipy.signal import get_window, stft
 from signus import dsp, sigio
 from signus.cli import check_code
 
-try:
-    import matplotlib.pyplot as plt
-    plt = None if plt.get_backend().lower() == "agg" else plt   # 무화면(ssh)이면 ASCII 로
-except ImportError:
-    plt = None
-
 
 def otsu(v, bins=128):
     h, ed = np.histogram(v, bins=bins)
@@ -39,38 +33,8 @@ def runs_of(mask):
     return list(zip(s, e, strict=True))
 
 
-def pool(a, m):
-    a = np.asarray(a, float)
-    k = max(1, a.shape[-1] // m)
-    return a[..., :(a.shape[-1] // k) * k].reshape(*a.shape[:-1], -1, k).max(-1)
-
-
-def curve(y, marks):
-    if plt:
-        plt.plot(y)
-        for la, v in marks:
-            plt.axhline(v, ls="--", label=f"{la} {v:.2f}")
-        plt.legend()
-        return plt.show()
-    y2 = pool(y, 100)
-    lo = float(min(y2.min(), *(v for _, v in marks)))
-    st = (float(max(y2.max(), *(v for _, v in marks))) - lo) / 18 or 1.0
-    ry = np.round((y2 - lo) / st).astype(int)
-    rm = {round((v - lo) / st): f"< {la} {v:.2f}" for la, v in marks}
-    for r in range(18, -1, -1):
-        print("".join("#" if ry[i] >= r else " " for i in range(y2.size)) + f"|{rm.get(r, '')}")
-
-
-def image(img):
-    if plt:
-        plt.imshow(img, aspect="auto", origin="lower", interpolation="nearest")
-        return plt.show()
-    sm = pool(pool(img, 100).T, 32).T
-    lo, hi = np.percentile(sm, 5), sm.max() + 1e-30
-    for row in np.clip((sm - lo) / (hi - lo) * 9.99, 0, 9).astype(int)[::-1]:
-        print("".join(" .:-=+*#%@"[i] for i in row))
-
-
+if len(sys.argv) < 2:
+    raise SystemExit("사용법: python3 sigc.py kat | python3 sigc.py <캡처파일> [단계 1-6]")
 arg, step = sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 0
 if arg == "kat":
     fs, t = 1e6, np.arange(66000.0)     # 66000: 마지막 버스트가 파일 끝까지 이어진다
@@ -89,12 +53,17 @@ else:
     fs = meta.fs
 cx = np.iscomplexobj(x0)
 raw = np.abs(np.asarray([x0.real, x0.imag])).max(0) if cx else np.abs(x0)
-cp = float((raw > 0.98).mean())
+cp = float((raw > 0.98 * np.percentile(raw, 99.9)).mean())   # 만점(±1)이 아니라 캡처 자신의
+#   99.9퍼센타일 기준: float 캡처는 만점 정규화가 안 돼 ±1 기준이면 통짜 오경보다(실측 cp972)
 x = dsp.analytic(x0)
 n, pw = x.size, np.abs(x) ** 2
 rms = float(np.sqrt(pw.mean()) + 1e-30)
-dc = abs(complex(x.mean())) / rms
-lp = np.log10(uniform_filter1d(pw, max(64, n // 1000)) + 1e-20)
+dc = abs(complex(x.mean())) / rms          # dc 는 블록 전에 재고, 그 뒤는 pipeline 과 똑같이
+x = x - x.mean()                           # DC 블록한 신호로 잰다 — 안 그러면 dc 큰 캡처에서
+pw = np.abs(x) ** 2                        # 프로브와 analyze 가 정반대 진단을 낸다
+# 러닝합 잔차 때문에 정확히 0 인 구간(스켈치/뮤트)에서 음수가 나와 log10 이 NaN 이 되고,
+# otsu 의 histogram 이 장비에서 생 트레이스백으로 죽었다 — 0 으로 눌러 막는다.
+lp = np.log10(np.maximum(uniform_filter1d(pw, max(64, n // 1000)), 0) + 1e-20)
 hot = lp >= (et := otsu(lp))
 ev = float(lp[hot].mean() - lp[~hot].mean()) if 0 < hot.sum() < n else 0.0
 ed = float(hot.mean())
@@ -114,9 +83,12 @@ quiet = sc[sc < thr]
 base = float(np.median(quiet)) if quiet.size else 9.99
 cn = float(np.log10((np.log(nb / k) + 1) / 0.105))
 lov, hiv = base + 0.25, base + 0.45   # find_bursts 의 두 문턱. 각 상수는 한 곳에만 쓰고,
-above, hi_m = sc >= lov, sc >= hiv    # b 줄에 lo/hi 로 되찍는다 — 필사 오타면 그 숫자가 바뀐다
+above, hi_m = sc >= lov, sc >= hiv    # b 줄에 dlo/dhi 로 되찍는다 — 오타면 그 숫자가 바뀐다
 rr = [(s, e) for s, e in runs_of(above) if hi_m[s:e].any()]
-segs = [pw[max(0, s * hop):min(n, (e - 1) * hop + nper)] for s, e in rr]
+spans = [(max(0, s * hop) + (hop if e - s >= 6 else 0),               # 6열 이상은 양끝 한 hop
+          min(n, (e - 1) * hop + nper) - (hop if e - s >= 6 else 0))  # 씩 자른다 — dsp 의
+         for s, e in rr]                                              # 스파이크 게이트와 같은
+segs = [pw[s:e] for s, e in spans]                                    # 구간에서 재려고
 sk = sum(float(sg.max() / (sg.mean() + 1e-30)) > 60.0 for sg in segs)
 gp_ = np.array([rr[i + 1][0] - rr[i][1] for i in range(len(rr) - 1)])
 sb = round(10 * float(np.median([sc[s:e].max() for s, e in rr]) - base)) if rr else 0
@@ -138,16 +110,73 @@ qo, qd, qs = (q2 - nb // 2, round(100 * float(du[q2])),
               round(10 * np.log10(m2[q2] + 1e-30))) if m2[q2] > 0 else (999, 0, 0)
 la = (f"sigc a n{n} f{fs:.0f} ev{round(100 * ev)} ed{round(100 * ed)}"
       f" sp{round(float(sp))} dc{round(100 * dc)} cp{round(1000 * cp)}"
-      f" iq{int(cx)}")
+      f" cx{int(cx)}")
 lb = (f"sigc b c{nc} g{nb} b{round(100 * base)} cn{round(100 * cn)}"
       f" t{round(100 * thr)} m{round(100 * float(sc.max()))}"
-      f" lo{round(100 * (lov - base))} hi{round(100 * (hiv - base))}")
+      f" dlo{round(100 * (lov - base))} dhi{round(100 * (hiv - base))}")
 lc = (f"sigc c r{len(rr)} dn{round(float(np.median([e - s for s, e in rr]))) if rr else 0}"
       f" gp{round(float(np.median(gp_))) if gp_.size else 0} sb{sb}"
       f" av{round(100 * float(above.mean()))} ah{round(100 * float(hi_m.mean()))}"
       f" sk{sk}")
 ld = (f"sigc d kb{kb} kc{kcont} w{wd} p{pk - nb // 2} pd{round(100 * float(du[pk]))}"
       f" ps{round(10 * np.log10(p95[pk] + 1e-30))} q{qo} qd{qd} qs{qs}")
+if step == 0:                      # 요약 4줄 — 이것만 받아쳐서 회신한다
+    for s in (la, lb, lc, ld):
+        print(f"{s} #{check_code(s)}")
+    sys.exit()
+
+# ─── 여기부터는 그림 단계(1~6) 전용이다. 요약 4줄만 쓸 거면 여기서 멈춰도 된다 ───
+
+try:
+    import matplotlib.pyplot as plt
+    plt = None if plt.get_backend().lower() == "agg" else plt   # 무화면(ssh)이면 ASCII 로
+except ImportError:
+    plt = None
+
+
+def pool(a, m):
+    a = np.asarray(a, float)
+    k = max(1, a.shape[-1] // m)
+    return a[..., :(a.shape[-1] // k) * k].reshape(*a.shape[:-1], -1, k).max(-1)
+
+
+def curve(y, marks):
+    if plt:
+        plt.plot(y)
+        for la, v in marks:
+            plt.axhline(v, ls="--", label=f"{la} {v:.2f}")
+        plt.legend()
+        return plt.show()
+    # 열마다 최소·최대를 같이 그린다: max 만 그리면 버스트 사이의 골이 지워져 계단이 통짜
+    # 블록으로 보이고, 관측자가 "평평하다(=베토)" 라고 정반대로 회신하게 된다.
+    kk = max(1, y.size // 100)
+    y2 = y[:y.size // kk * kk].reshape(-1, kk)
+    ylo, yhi = y2.min(1), y2.max(1)
+    bot = float(min(ylo.min(), *(v for _, v in marks)))
+    st = (float(max(yhi.max(), *(v for _, v in marks))) - bot) / 18 or 1.0
+    rl, rh = np.round((ylo - bot) / st).astype(int), np.round((yhi - bot) / st).astype(int)
+    rm = {}
+    for la, v in marks:
+        rm.setdefault(round((v - bot) / st), []).append(f"{la} {v:.2f}")
+    for r in range(18, -1, -1):
+        bg = "-" if r in rm else " "          # 문턱은 가로 전체 선으로 (겹치면 라벨 합침)
+        print("".join("#" if rl[i] >= r else ("+" if rh[i] >= r else bg)
+                      for i in range(rl.size)) + "|" + " / ".join(rm.get(r, [])))
+    print("#=이 구간 내내 그 위 · +=봉우리만 그 위 · -=문턱선")
+
+
+def image(img):
+    if plt:
+        plt.imshow(img, aspect="auto", origin="lower", interpolation="nearest")
+        return plt.show()
+    sm = pool(pool(img, 100).T, 32).T
+    hi = sm.max() + 1e-30
+    lo = max(float(np.percentile(sm, 5)), hi - 4)   # 표시폭 4 decades 고정 — real 캡처는 빈
+    #   음수 반쪽이 1e-16 이라 5퍼센타일을 쓰면 눈금이 14 decades 로 늘어나 통짜 벽이 된다
+    for row in np.clip((sm - lo) / (hi - lo) * 9.99, 0, 9).astype(int)[::-1]:
+        print("".join(" .:-=+*#%@"[i] for i in row))
+
+
 if step == 1:
     print(f"n {n}  fs {fs:.0f}  길이 {n / fs:.3f}s  형식 {'iq' if np.iscomplexobj(x0) else 'real'}")
     print(f"rms {rms:.4f}  dc {100 * dc:.1f}%  클리핑 {1000 * cp:.1f}‰  피크비 {float(sp):.0f}dB")
@@ -160,16 +189,16 @@ elif step == 3:
     print("워터폴 절대전력 (아래=-fs/2, 위=+fs/2) — 가로로 끊기지 않는 띠 = 연속 방사체")
 elif step == 4:
     image(np.log10(np.fft.fftshift(r, 0) + 1e-30))
-    print("빈별 바닥 대비 비율 — find_bursts 가 보는 그림. 연속 방사체는 여기서 사라진다")
+    print("빈별 바닥 대비 비율 — find_bursts 가 보는 그림. 세기가 일정한 연속 방사체는 여기서"
+          " 사라지지만, 세기가 흔들리면 가짜 버스트로 남는다 (d 줄 pd 로 확인)")
 elif step == 5:
     curve(sc, [("base", base), ("hi", hiv), ("c_noise", cn)])
     print(f"열 점수 — hi 위 봉우리가 버스트 후보. 런 {len(rr)}개, base {base:.2f}, cn {cn:.2f}")
 elif step == 6:
-    for (s, e), sg in zip(rr, segs, strict=True):
-        print(f"열 {s}-{e}  샘플 {s * hop}-{min(n, (e - 1) * hop + nper)}"
-              f"  높이 {10 * (float(sc[s:e].max()) - base):.0f}dB"
+    for (s, e), (a0, a1), sg in zip(rr, spans, segs, strict=True):
+        print(f"열 {s}-{e}  샘플 {a0}-{a1}  높이 {10 * (float(sc[s:e].max()) - base):.0f}dB"
               f"  피크/평균 {float(sg.max() / (sg.mean() + 1e-30)):.0f} (60 초과=스파이크 탈락)")
-    print(f"런 {len(rr)}개 — 병합/가드 전 원시 후보")
-else:
-    for s in (la, lb, lc, ld):
-        print(f"{s} #{check_code(s)}")
+    print(f"위는 병합/가드 전 원시 후보 {len(rr)}개 — 아래가 실제로 분석에 쓰이는 답이다:")
+    fb = dsp.find_bursts(x, fs)
+    print(f"find_bursts → {fb[:6]}{'...' if len(fb) > 6 else ''}"
+          + ("   ※ 통짜 = 버스트 미검출" if fb == [(0, n)] else f"   버스트 {len(fb)}개"))

@@ -37,9 +37,9 @@ def parse(text: str) -> tuple[dict[str, dict[str, int]], list[str]]:
     """받아친 블록 -> ({줄: {키: 값}}, 문제 목록). 줄마다 검출 코드를 대조한다."""
     doc, bad = {}, []
     for raw in text.strip().splitlines():
-        ln = raw.strip()
-        if not ln.startswith("sigc"):
-            continue
+        ln = re.sub(r"\s+", " ", raw).strip()   # check_code 와 같은 잣대로 공백을 접는다 --
+        if not ln.startswith("sigc"):           # 안 그러면 'sigc  a' 를 "코드 없음" 이라고
+            continue                            # 엉뚱하게 지목한다 (손 필사에서 흔한 오타)
         m = re.fullmatch(r"(sigc ([a-d])\b.*?)\s*#([0-9a-z]{4})", ln)
         if not m:
             bad.append(f"검출 코드(#xxxx)가 없습니다: {ln}")
@@ -60,6 +60,12 @@ def interpret(doc: dict[str, dict[str, int]]) -> None:
     a, b, c, d = doc["a"], doc["b"], doc["c"], doc["d"]
     fs, nb, hop = float(a["f"]), b["g"], b["g"] // 2
     khz = fs / nb / 1000
+    # 문턱은 장비가 되찍어 준 값을 그대로 쓴다 — 45/25 를 여기 박아 두면 장비 필사가 틀렸을 때
+    # 자기모순 없이 조용히 틀린 해석이 나온다.
+    dlo, dhi = b.get("dlo", 25), b.get("dhi", 45)
+    if (dlo, dhi) != (25, 45):
+        print(f"⚠ 장비의 문턱 상수가 표준(dlo25 dhi45)과 다릅니다: dlo{dlo} dhi{dhi} —"
+              " 프로브의 lov/hiv 줄 필사부터 확인하세요. 아래 해석은 받은 값 기준입니다.")
     print(f"\n캡처: n={a['n']} ({a['n'] / fs:.3f}s @ fs {fs:.0f})  포락선 분리 {a['ev'] / 100:.2f}"
           f"  듀티 {a['ed']}%  피크비 {a['sp']}dB  dc {a['dc']}%  클리핑 {a['cp']}‰")
     print(f"셀: 열 {b['c']}·빈 {nb}  base {b['b'] / 100:.2f} (c_noise {b['cn'] / 100:.2f})"
@@ -70,7 +76,7 @@ def interpret(doc: dict[str, dict[str, int]]) -> None:
           f"→보정 {(c['gp'] + 3) * hop}샘플{gp_note}  점수 {c['sb']}dB  스파이크런 {c['sk']}")
     q = "" if d["q"] == 999 else \
         f"  부 방사체 {d['q'] * khz:+.1f}kHz (듀티 {d['qd']}%, {d['qs']}dB)"
-    if not a.get("iq", 1) and d["kb"] >= nb // 2 - 2:
+    if not a.get("cx", 1) and d["kb"] >= nb // 2 - 2:
         # real 은 해석신호라 음수 반쪽이 비어 있다. 바닥을 전 빈에서 잡으면 g 가 0 으로 내려가
         # 양수 반쪽 전체가 '점유' 로 읽힌다 — 프로브의 g 줄(fl if cx else fl[:nb//2]) 필사 의심.
         print(f"주의: real 캡처인데 점유빈 {d['kb']}개(밴드 절반) — 프로브의 g 줄 필사를"
@@ -99,19 +105,26 @@ def interpret(doc: dict[str, dict[str, int]]) -> None:
     elif b["b"] > b["cn"] + 25:
         print(f"→ E4 스펙트럼 셔플 가드: base {b['b'] / 100:.2f} > c_noise+0.25 — 연속 신호가"
               " 스펙트럼만 바꾸는 패턴으로 읽혀 [(0,n)].")
-    elif b["m"] < b["b"] + 45:
-        print(f"→ E5 hi 미달: 최대 점수 {b['m'] / 100:.2f} 가 base+0.45 를 못 넘는다 — 런 없음,"
-              " [(0,n)]. (초협대역 희석 또는 저SNR)")
-    elif c["r"] > 0 and c["sk"] >= c["r"]:
-        print("→ E6 스파이크 커버리지: 모든 런이 임펄스로 탈락 — 폴백 [(0,n)].")
-    elif b["m"] < b["b"] + 52 or (c["r"] <= 1 and c["dn"] <= 20):
-        print(f"→ 회색지대: 점수 여유 {(b['m'] - b['b']) / 100:.2f}(0.45~0.51) 또는 짧은 단일"
-              " 런 — 검출돼도 커버리지 폴백이 [(0,n)] 과 구별되지 않는 구간(실측 2026-08-13)."
-              " 판정 유보, 단계 5 관찰을 요청할 것.")
+    elif b["m"] < b["b"] + dhi:
+        print(f"→ E5 hi 미달: 최대 점수 {b['m'] / 100:.2f} 가 base+{dhi / 100:.2f} 를 못 넘는다"
+              " — 런 없음, [(0,n)]. (초협대역 희석 또는 저SNR)")
+    elif c["r"] > 0 and c["sk"] > 0.4 * c["r"]:
+        # dsp 의 가드는 개수가 아니라 살아남은 샘플 질량이다 (covered < 0.6*(covered+spiked)):
+        # 런 길이가 고르면 sk/r > 0.4 와 같은 말이라, 큰 버스트 하나만 죽어도 폴백이 걸린다.
+        print(f"→ E6 스파이크 커버리지: 런 {c['r']}개 중 {c['sk']}개가 임펄스로 탈락 — 살아남은"
+              " 질량이 60% 아래라 폴백 [(0,n)].")
+    elif c["r"] * max(c["dn"] - 3, 1) * hop < 0.1 * (a["ed"] / 100) * a["n"]:
+        print("→ E7 포락선-스팬 복귀: 검출된 런의 샘플 합이 포락선 고전력 질량의 10% 미만 —"
+              " dsp 는 셀 결과를 버리고 포락선의 고전력 구간을 돌려준다. 그 구간이 레코드"
+              " 양끝에 닿으면 [(0,n)] 과 구별되지 않는다 (닿지 않으면 (15,n) 같은 값이 뜬다).")
+    elif b["m"] < b["b"] + dhi + 7:
+        print(f"→ 회색지대: 점수 여유 {(b['m'] - b['b']) / 100:.2f}"
+              f" ({dhi / 100:.2f}~{(dhi + 7) / 100:.2f}) — 검출돼도 커버리지 폴백이 [(0,n)] 과"
+              " 구별되지 않는 구간(실측 2026-08-13). 판정 유보, 단계 5 관찰을 요청할 것.")
     else:
-        print("→ 이 특징이면 HEAD find_bursts 는 버스트를 잡아야 정상. 장비 코드가 셀 기반"
-              " 변경분(2026-08-13 발급) 이전 판일 가능성이 크다 — 어느 인쇄본까지 반영됐는지"
-              " 확인이 먼저다.")
+        print("→ 이 특징이면 HEAD find_bursts 는 버스트를 잡아야 정상 — 즉 이 줄의 특징만으로는"
+              " [(0,n)] 이 설명되지 않는다. 장비에서 `sigc.py <캡처> 6` 을 돌려 find_bursts 의"
+              " 실제 출력과 원시 후보를 함께 받아올 것 (병합·1열드랍은 이 4줄에 안 담긴다).")
 
 
 def _emitters(doc: dict[str, dict[str, int]]) -> list[dict]:
@@ -119,7 +132,9 @@ def _emitters(doc: dict[str, dict[str, int]]) -> list[dict]:
     b, c, d = doc["b"], doc["c"], doc["d"]
     nb, hop = b["g"], b["g"] // 2
     fs = float(doc["a"]["f"])
-    w = max(1, min(d["w"], nb // 2))
+    # w 도 창 번짐만큼 넓게 읽힌다(실측: 참 4빈 -> 8~10). 안 빼면 재합성이 2~4배 넓어져
+    # 정작 재현하려던 "초협대역 희석" 영역을 스스로 지운다.
+    w = max(1, min(d["w"] - 4, nb // 2))
     # dn/gp 고정 편향 보정 (실측 2026-08-13): STFT 창 번짐+3열 평활로 dn 은 ~+3열 크게,
     # gp 는 ~-3열 작게 읽힌다. dn+gp 는 참 주기를 ~0.5열 안에서 보존한다.
     blen = max(c["dn"] - 3, 2) * hop
@@ -143,7 +158,7 @@ def _emitters(doc: dict[str, dict[str, int]]) -> list[dict]:
     return ems
 
 
-def _build(n: int, fs: float, ems: list[dict], seed: int) -> np.ndarray:
+def _build(n: int, fs: float, ems: list[dict], seed: int, cx: bool = True) -> np.ndarray:
     rng = np.random.default_rng(seed)
     x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)  # 잡음 전력 1
     t = np.arange(n)
@@ -156,12 +171,18 @@ def _build(n: int, fs: float, ems: list[dict], seed: int) -> np.ndarray:
         if not e["cont"]:
             s = s * ((t % (e["blen"] + e["bgap"])) < e["blen"])
         x = x + s
-    return x
+    # 회신이 real(cx0)이면 실수 패스밴드로 낸다 — iq 로 만들면 장비가 지나온 hilbert 경로를
+    # 재현하지 못해, 정작 재현하려던 실패가 합성에서 사라진다.
+    return x if cx else x.real * np.sqrt(2)
 
 
 def cmd_gen(doc: dict[str, dict[str, int]], outdir: Path) -> None:
-    a = doc["a"]
-    n, fs = a["n"], float(a["f"])
+    a, c, d = doc["a"], doc["c"], doc["d"]
+    n, fs, cx = a["n"], float(a["f"]), bool(a.get("cx", 1))
+    if c["r"] == 0 and d["w"] == 0:
+        print("이 회신에는 재현할 구조가 없습니다 (런 0개·점유폭 0빈 = 잡음만/전 샘플 동일).")
+        print("→ 합성해도 '재현 ✓' 가 무의미합니다. 단계 1·3 으로 읽기 설정부터 확인하세요.")
+        return
     ems = _emitters(doc)
     bursty = [e for e in ems if not e["cont"]]
     cont = [e for e in ems if e["cont"]]
@@ -178,14 +199,15 @@ def cmd_gen(doc: dict[str, dict[str, int]], outdir: Path) -> None:
     variants = [("v0-측정치", ems), ("v1-버스트+6dB", mod(db_burst=6)),
                 ("v2-버스트-6dB", mod(db_burst=-6)), ("v5-간격2배", mod(gap_x=2))]
     if cont:
-        variants += [("v3-무연속", [dict(e) for e in bursty] or ems),
-                     ("v4-연속+6dB", mod(db_cont=6))]
+        variants.append(("v4-연속+6dB", mod(db_cont=6)))
+        if bursty:      # 버스트 방사체가 없으면 '무연속' 은 v0 과 같은 것을 이름만 바꿔 다는 셈
+            variants.append(("v3-무연속", [dict(e) for e in bursty]))
 
     outdir.mkdir(parents=True, exist_ok=True)
     hits = 0
     for i, (name, es) in enumerate(variants):
-        x = _build(n, fs, es, seed=100 + i)
-        meta = Meta(fs, "iq", "f32")
+        x = _build(n, fs, es, seed=100 + i, cx=cx)
+        meta = Meta(fs, "iq" if cx else "real", "f32")
         path = outdir / make_name(f"sigc-{name}", meta)
         write(str(path), x, meta)
         fb = dsp.find_bursts(x, fs)

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import html
+import re
 import subprocess
 import sys
 from datetime import date
@@ -21,22 +22,31 @@ import codebook as cb  # noqa: E402
 SRC = cb.ROOT / "tools" / "sigc_probe.py"
 OUT = cb.DOCS / "signus-관찰프로브-sigc-필사용.pdf"
 
-STEPS = [
-    ("kat", "자기검증", "아래 기대 4줄과 글자까지 일치",
-     "매번 먼저. 다르면 값이 다른 줄부터 스크립트 재대조"),
-    ("(없음)", "요약 4줄", "kat 과 동일한 형식", "4줄을 #코드까지 그대로 받아쳐 회신"),
-    ("1", "읽기 확인", "n 60000 · 길이 0.060s · 형식 iq", "n·fs 가 캡처 실제와 맞는가"),
-    ("2", "광대역 포락선 (베토)", "계단 5개, 분리도 0.86",
-     "계단이 보이는가, 분리도가 0.12 를 넘는가"),
-    ("3", "워터폴 절대전력", "세로 버스트 5줄 + 위쪽 가로 연속 띠 1개",
-     "가로로 끊기지 않는 띠(연속 방사체)가 있는가, 버스트 줄 수"),
-    ("4", "빈별 바닥 대비 비율", "연속 띠는 사라지고 버스트 5줄만",
-     "find_bursts 가 보는 그림 — 버스트가 여기서도 살아 있는가"),
-    ("5", "열 점수 + 문턱", "봉우리 5개가 hi 위, base 1.51 ≈ c_noise 1.56",
-     "봉우리가 hi 를 넘는가, base 가 c_noise 근처인가"),
-    ("6", "후보 런 표", "런 5개, 높이 ~34dB, 피크/평균 하나만 60 초과",
-     "런 개수·높이·스파이크 여부"),
-]
+def steps_table(kat: str) -> list[tuple[str, str, str, str]]:
+    """단계표의 '기대값' 칸은 발급 시점의 KAT 출력에서 뽑는다 — 손으로 적어 두면
+    프로브를 고칠 때마다 조용히 어긋난다 (2026-08-13 리뷰가 실제로 잡은 사고)."""
+    v = {}
+    for ln in kat.splitlines():
+        v.update({k: int(x) for k, x in re.findall(r"([a-z]+)(-?\d+)", ln.split("#")[0][7:])})
+    fb = subprocess.run([sys.executable, str(SRC), "kat", "6"], capture_output=True, text=True,
+                        env={"PYTHONPATH": str(cb.ROOT)}, check=True).stdout.strip().splitlines()
+    return [
+        ("kat", "자기검증", "아래 기대 4줄과 글자까지 일치",
+         "매번 먼저. 다르면 값이 다른 줄부터 스크립트 재대조"),
+        ("(없음)", "요약 4줄", "kat 과 같은 형식", "4줄을 #코드까지 그대로 받아쳐 회신"),
+        ("1", "읽기 확인", f"n {v['n']} · 길이 {v['n'] / v['f']:.3f}s · 형식 iq",
+         "n·fs 가 캡처 실제와 맞는가"),
+        ("2", "광대역 포락선 (베토)", f"계단이 또렷하고 분리도 {v['ev'] / 100:.2f}",
+         "계단(#)과 골(빈칸)이 보이는가, 분리도가 0.12 를 넘는가"),
+        ("3", "워터폴 절대전력", "세로 버스트 줄 + 가로로 안 끊기는 띠 2개",
+         "끊기지 않는 가로 띠(연속 방사체)가 있는가, 버스트 줄 수"),
+        ("4", "빈별 바닥 대비 비율", "세기 일정한 연속 띠는 사라지고 버스트만",
+         "find_bursts 가 보는 그림 — 버스트가 여기서도 살아 있는가"),
+        ("5", "열 점수 + 문턱", f"봉우리가 hi 위, base {v['b'] / 100:.2f} ≈ c_noise"
+         f" {v['cn'] / 100:.2f}", "봉우리가 hi 선을 넘는가, base 가 c_noise 근처인가"),
+        ("6", "후보 런 + 실제 답", f"원시 후보 {v['r']}개 → {fb[-1][:38]}",
+         "원시 후보가 병합·가드를 거쳐 몇 개로 남는가"),
+    ]
 
 EXTRA_CSS = """<style>
   .steps { margin-top: 10pt; }
@@ -95,11 +105,12 @@ def build() -> str:
     nlines = len(cb.split_lines(src))
     total = 1 + len(chunks)
 
+    kat = kat_lines()
     srows = ['<div class="srow head"><span>명령 인자</span><span>무엇을 보나</span>'
              '<span>kat 에서 보여야 하는 것</span><span>실캡처에서 관찰·회신할 것</span></div>']
     srows += [f'<div class="srow"><span class="scmd">{html.escape(a)}</span>'
               f'<span>{html.escape(b)}</span><span>{html.escape(c)}</span>'
-              f'<span>{html.escape(d)}</span></div>' for a, b, c, d in STEPS]
+              f'<span>{html.escape(d)}</span></div>' for a, b, c, d in steps_table(kat)]
 
     cover = f"""{EXTRA_CSS}<section class="page cover">
   <div class="ctitle">sigc <span class="cgray">관찰 프로브</span></div>
@@ -118,12 +129,14 @@ def build() -> str:
        그 단계를 그림/ASCII 로 보여준다 — 본 것을 말로 회신하면 된다.<br>
     ⑤ 받은 쪽(맥)은 <span class="mono">tools/sigc.py check</span> 로 먼저 오타 검증 +
        출구 해석을 한다.</div>
-  <div class="kat">{html.escape(kat_lines())}</div>
+  <div class="kat">{html.escape(kat)}</div>
   <div class="steps">{''.join(srows)}</div>
   <div class="cnote">요약 4줄 읽는 법: a=포락선(ev 분리도x100 · ed 듀티% · sp 피크비dB ·
-    dc% · cp 클리핑‰ · iq1=복소/iq0=실수. cp 는 정수형 캡처에서만 의미) &#160; b=셀 점수
-    지형(c 열수 · g 빈수 · b base · cn · t 문턱 · m 최대 · lo/hi 문턱 여유, x100 — lo25 hi45
-    가 아니면 그 상수를 잘못 옮긴 것) &#160; c=버스트 구조(r 런수 · dn 길이열 · gp 간격열 ·
+    dc% · cp 포화 지표‰ = 캡처 자신의 상위 0.1% 레벨에 붙은 표본 비율, 깨끗하면 2~4·포화면
+    900+ · cx1=복소/cx0=실수) &#160; b=셀 점수
+    지형(c 열수 · g 빈수 · b base · cn · t 문턱 · m 최대 · dlo/dhi 는 base 로부터의 문턱 여유,
+    x100 — dlo25 dhi45 가 아니면 그 상수를 잘못 옮긴 것) &#160; c=버스트 구조(r 런수 ·
+    dn 길이열 · gp 간격열 ·
     sb 점수dB · av/ah 문턱 위 열% · sk 스파이크런) &#160; d=방사체(kb 점유빈 · kc 연속점유빈 ·
     w 최대폭빈 · p/q 위치빈 · pd/qd 듀티% · ps/qs 절대dB, q999=부 방사체 없음).
     한 줄이 100칸을 넘으면 <span class="mono">{cb.CONT_MARK}</span> 이어짐 — 붙여서 입력.

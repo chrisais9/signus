@@ -148,9 +148,44 @@ def test_kat_steps_run(tmp_path):
         assert rc == 0 and out.strip()
 
 
-def test_transcription_budget():
-    lines = [ln for ln in PROBE.read_text().splitlines() if ln.strip()]
-    assert len(lines) <= 160, f"필사 분량 초과: {len(lines)}줄"
+def test_transcription_budget_and_tiers():
+    """요약 4줄 경로가 파일 앞부분만으로 완결돼야 한다 — 장비에서 거기까지만 필사하고
+    멈춰도 회신을 낼 수 있게. 경계 아래는 그림 단계 전용이다."""
+    lines = PROBE.read_text().splitlines()
+    cut = next(i for i, ln in enumerate(lines) if "여기부터는 그림 단계" in ln)
+    tier1 = len([ln for ln in lines[:cut] if ln.strip()])
+    total = len([ln for ln in lines if ln.strip()])
+    assert tier1 <= 125, f"1단계(요약) 필사 분량 초과: {tier1}줄"
+    assert total <= 190, f"전체 필사 분량 초과: {total}줄"
+
+
+def test_zero_regions_do_not_crash_the_probe(tmp_path):
+    """스켈치/뮤트로 '정확히 0' 인 구간이 있으면 러닝합 잔차가 음수로 내려가 log10 이
+    NaN 이 되고 otsu 의 histogram 이 죽었다 — 장비에서 생 트레이스백으로 나오던 실패."""
+    rng = np.random.default_rng(5)
+    n = 65536
+    x = _qpsk(n, 1.5e5, 5e4, seed=4) * _mask(n, 6000, 6000)
+    x += np.sqrt(0.01 / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    x[_mask(n, 6000, 6000) == 0] = 0            # 스켈치: off 구간을 정확히 0 으로
+    rc, out = _run(PROBE, [str(_save(tmp_path, x))])
+    assert rc == 0, out
+    assert set(_parse(out)) == {"a", "b", "c", "d"}
+
+
+def test_summary_uses_the_same_dc_block_as_the_pipeline(tmp_path):
+    """DC 를 안고 재면 dc 큰 캡처에서 프로브와 analyze 가 정반대 진단을 냈다."""
+    rng = np.random.default_rng(6)
+    n = 65536
+    x = _qpsk(n, 2e5, 5e4, seed=7) * _mask(n, 6000, 6000)
+    x += np.sqrt(0.01 / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+    x = x + 3.0                                  # 큰 DC/LO 누설
+    path = _save(tmp_path, x)
+    rc, out = _run(PROBE, [str(path)])
+    assert rc == 0, out
+    doc = _parse(out)
+    assert doc["a"]["dc"] >= 50                  # dc 자체는 블록 전 값으로 보고하고
+    assert doc["a"]["ev"] >= 12                  # 판정은 블록 후 신호로 — 베토가 아니다
+    assert dsp.find_bursts(dsp.analytic(x) - dsp.analytic(x).mean(), FS) != [(0, n)]
 
 
 # --- 개발기 수신 도구 -----------------------------------------------------------
