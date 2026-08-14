@@ -82,8 +82,9 @@ thr = otsu(sc, bins=64)
 quiet = sc[sc < thr]
 base = float(np.median(quiet)) if quiet.size else 9.99
 cn = float(np.log10((np.log(nb / k) + 1) / 0.105))
-lov, hiv = base + 0.25, base + 0.45   # find_bursts 의 두 문턱. 각 상수는 한 곳에만 쓰고,
-above, hi_m = sc >= lov, sc >= hiv    # b 줄에 dlo/dhi 로 되찍는다 — 오타면 그 숫자가 바뀐다
+dlo, dhi = 0.25, 0.45              # find_bursts 의 두 문턱 여유. 상수는 한 곳에만 쓰고
+lov, hiv = base + dlo, base + dhi  # b 줄에 이 숫자를 그대로 되찍는다 — 오타면 그게 드러난다
+above, hi_m = sc >= lov, sc >= hiv
 rr = [(s, e) for s, e in runs_of(above) if hi_m[s:e].any()]
 spans = [(max(0, s * hop) + (hop if e - s >= 6 else 0),               # 6열 이상은 양끝 한 hop
           min(n, (e - 1) * hop + nper) - (hop if e - s >= 6 else 0))  # 씩 자른다 — dsp 의
@@ -113,7 +114,8 @@ la = (f"sigc a n{n} f{fs:.0f} ev{round(100 * ev)} ed{round(100 * ed)}"
       f" cx{int(cx)}")
 lb = (f"sigc b c{nc} g{nb} b{round(100 * base)} cn{round(100 * cn)}"
       f" t{round(100 * thr)} m{round(100 * float(sc.max()))}"
-      f" dlo{round(100 * (lov - base))} dhi{round(100 * (hiv - base))}")
+      f" dlo{round(100 * dlo)} dhi{round(100 * dhi)}")   # 뺄셈으로 되계산하면 안 된다 --
+#   (base+0.45)-base 가 44.99999999999999 라, int 로 잘못 옮기면 44 로 찍혔다 (2026-08-14 실측)
 lc = (f"sigc c r{len(rr)} dn{round(float(np.median([e - s for s, e in rr]))) if rr else 0}"
       f" gp{round(float(np.median(gp_))) if gp_.size else 0} sb{sb}"
       f" av{round(100 * float(above.mean()))} ah{round(100 * float(hi_m.mean()))}"

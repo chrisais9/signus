@@ -99,6 +99,17 @@ def test_kat_is_deterministic_and_self_checking():
     assert set(doc) == {"a", "b", "c", "d"}
 
 
+def test_threshold_fields_are_the_constants_not_a_subtraction(burst_train):
+    """dlo/dhi 는 필사 오타 검출용이라 base 와 무관하게 늘 25/45 여야 한다.
+    (base+0.45)-base 로 되계산하던 판은 44.99999999999999 라, 장비에서 int 로 옮겨졌을 때
+    dhi44 로 찍혀 멀쩡한 상수를 틀렸다고 지목했다 (2026-08-14 실측)."""
+    for args in (["kat"], [str(burst_train[0])]):     # base 가 서로 다른 두 캡처
+        rc, out = _run(PROBE, args)
+        assert rc == 0, out
+        b = _parse(out)["b"]
+        assert (b["dlo"], b["dhi"]) == (25, 45), f"{args}: dlo{b['dlo']} dhi{b['dhi']}"
+
+
 def test_healthy_burst_train_features(burst_train):
     path, x = burst_train
     rc, out = _run(PROBE, [str(path)])
