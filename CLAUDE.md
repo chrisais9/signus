@@ -35,6 +35,10 @@ echo "<받은 줄>" | tools/brief.py check      # 제일 먼저 이걸 돌린다
 - 추가 정보가 필요하면 `docs/사용법-테스트-보고.md` §5.7 에서 **한 가지만** 고른다 — 한 글자도
   사용자가 손으로 친다.
 - 재현 없이 추측으로 고치지 않는다.
+- **`sigc a/b/c/d` 4줄**(관찰 프로브 회신)이 오면 `tools/sigc.py check` 가 먼저다 — 줄 단위
+  오타 검증 + find_bursts 의 어느 출구가 `[(0,n)]` 을 냈는지 해석. 특징 재현 데이터셋은
+  `tools/sigc.py gen --out <디렉터리>` (즉석 find_bursts 채점 포함). 프로브 재발급은
+  `tools/probe_pdf.py`.
 
 ## 깨뜨리면 안 되는 규칙
 
