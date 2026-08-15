@@ -13,6 +13,7 @@ import argparse
 import math
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -237,10 +238,57 @@ def cmd_gen(doc: dict[str, dict[str, int]], outdir: Path) -> None:
     print(f"\n{len(variants)}개 변형 중 {hits}개가 [(0,n)] 재현 — 재현 변형을 tests/ 에 잠근다.")
 
 
+# kat 필드가 어긋났을 때 다시 볼 프로브 소스 구간 (실사고 두 건으로 캘리브레이션:
+# dhi44 → 인쇄 꼬리의 절단, q-15 qd56 qs56 → pgrp 조건이 항상 거짓 → (pk,pk+1) 폴백)
+_KAT_HINT = {
+    ("a", "n"): "kat 신호 구성 (fs, t = ... / x0 줄들)", ("a", "f"): "kat 신호 구성",
+    ("a", "ev"): "포락선 구간 (lp/hot/ev 줄)", ("a", "ed"): "포락선 구간 (hot/ed 줄)",
+    ("a", "sp"): "sp = 10 * np.log10(...) 줄", ("a", "dc"): "dc = abs(complex(x.mean()))/rms",
+    ("a", "cp"): "cp = ... percentile(raw, 99.9) 줄", ("a", "cx"): "cx = np.iscomplexobj(x0)",
+    ("b", "c"): "stft 호출 (nperseg/noverlap)", ("b", "g"): "stft 호출 / nb, nc = P.shape",
+    ("b", "b"): "sc/thr/quiet/base 구간", ("b", "cn"): "cn = float(np.log10(...)) 줄",
+    ("b", "t"): "thr = otsu(sc, bins=64)", ("b", "m"): "sc 구간 (uniform_filter1d ... , 3)",
+    ("b", "dlo"): "dlo, dhi = 0.25, 0.45 와 b줄 인쇄 꼬리 — 뺄셈 되계산이면 절단 때 44",
+    ("b", "dhi"): "dlo, dhi = 0.25, 0.45 와 b줄 인쇄 꼬리 — 뺄셈 되계산이면 절단 때 44",
+    ("c", "r"): "above/hi_m/rr 줄", ("c", "dn"): "rr/median 줄", ("c", "gp"): "gp_ 줄",
+    ("c", "sb"): "sb = round(10 * ...) 줄", ("c", "av"): "above 줄", ("c", "ah"): "hi_m 줄",
+    ("c", "sk"): "spans/segs/sk 줄 (60.0 문턱)",
+    ("d", "kb"): "du/occ 줄 (40 * g, 0.1)", ("d", "kc"): "kcont 줄 (fls > 5 * g)",
+    ("d", "w"): "grp/wd 줄", ("d", "p"): "p95/pk 줄 (percentile 95)",
+    ("d", "pd"): "du[pk] — du/occ 줄", ("d", "ps"): "p95[pk] — p95 줄",
+    ("d", "q"): "pgrp = next(...) 줄 — 조건 s <= pk < e 와 for s, e 순서. 폴백이면 q가 주"
+                " 방사체 어깨(-15류)로 샌다", ("d", "qd"): "pgrp/m2/q2 세 줄 (q 와 같은 원인)",
+    ("d", "qs"): "pgrp/m2/q2 세 줄 (q 와 같은 원인)",
+}
+
+
+def kat_diff(doc: dict[str, dict[str, int]]) -> int:
+    """kat 회신을 개발기에서 직접 돌린 기준 4줄과 필드 단위로 대조 — 어긋난 필드마다
+    프로브의 어느 소스 구간을 다시 볼지 짚는다. 표지와 눈으로 견주는 일을 자동화한 것."""
+    r = subprocess.run([sys.executable, str(_ROOT / "tools" / "sigc_probe.py"), "kat"],
+                       capture_output=True, text=True, env={"PYTHONPATH": str(_ROOT)})
+    ref, _, _ = parse(r.stdout)
+    diffs = 0
+    for tag in "abcd":
+        for k, v in ref[tag].items():
+            got = doc[tag].get(k, doc[tag].get(k))
+            if got != v:
+                diffs += 1
+                hint = _KAT_HINT.get((tag, k), "해당 필드를 만드는 줄")
+                print(f"sigc {tag} · {k}: 장비 {got} ≠ 기준 {v}   ← {hint}")
+    if diffs == 0:
+        print("kat 완전 일치 — 필사 이상 없음 ✓ 실캡처로 진행하세요.")
+        return 0
+    print(f"\n어긋난 필드 {diffs}개 — 위 구간의 필사를 확인한 뒤 kat 을 다시 돌려 주세요.")
+    return 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="sigc 프로브 회신 처리 (검증/해석/데이터셋 생성)")
     ap.add_argument("cmd", choices=("check", "gen"))
     ap.add_argument("--out", type=Path, help="gen: 합성 변형을 쓸 디렉터리")
+    ap.add_argument("--kat", action="store_true",
+                    help="check: kat 회신을 기준 4줄과 필드 단위로 대조해 용의 소스 줄을 짚는다")
     args = ap.parse_args()
     doc, bad, notes = parse(sys.stdin.read())
     for tag in sorted(doc):
@@ -271,6 +319,8 @@ def main() -> int:
                   + (f"모르는 키 {sorted(extra)}" if extra else "") + pair)
             return 2
     if args.cmd == "check":
+        if args.kat:
+            return kat_diff(doc)
         interpret(doc)
         return 0
     if not args.out:

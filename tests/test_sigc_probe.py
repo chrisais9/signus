@@ -224,6 +224,22 @@ def test_check_recovers_a_visually_confused_code_char():
     assert rc == 0 and "오독" in verdict and "일치" in verdict
 
 
+def test_check_kat_mode_triages_field_mismatches_to_source_lines():
+    """실사고(2026-08-15) 자동화: 장비 kat 의 dhi44(인쇄 꼬리 절단)와 q-15 qd56 qs56
+    (pgrp 폴백)을 기준 4줄과 필드 단위로 대조해 용의 소스 구간을 짚어야 한다."""
+    _, out = _run(PROBE, ["kat"])
+    rc, verdict = _run(TOOL, ["check", "--kat"], stdin=out)
+    assert rc == 0 and "완전 일치" in verdict
+    lines = out.strip().splitlines()
+    b = lines[1].rsplit(" #", 1)[0].replace("dhi45", "dhi44")
+    d = lines[3].rsplit(" #", 1)[0].replace("q37 qd100 qs51", "q-15 qd56 qs56")
+    lines[1], lines[3] = f"{b} #{check_code(b)}", f"{d} #{check_code(d)}"
+    rc, verdict = _run(TOOL, ["check", "--kat"], stdin="\n".join(lines))
+    assert rc == 1
+    assert "dhi: 장비 44" in verdict and "절단" in verdict
+    assert "q: 장비 -15" in verdict and "pgrp" in verdict
+
+
 def test_check_names_an_unknown_key_instead_of_crashing():
     """장비 f-문자열 키 오타(실측: pd{ 를 pdb{ 로 침)는 검출 코드로는 정상이라 키 검증에서
     잡아야 한다 — 없으면 해석기가 KeyError 로 죽는다."""
