@@ -48,13 +48,15 @@ else:
 _, _, z = stft(x, fs=fs, window="hamming", nperseg=256, noverlap=128,
                return_onesided=True, boundary=None, padded=False)
 db = 10 * np.log10(np.abs(z) ** 2 + 1e-12)
-lo = float(np.percentile(db, 25))               # 바닥 근처를 검정으로, +35dB 를 흰색으로
-img = np.clip((db - lo) / 35.0, 0, 1)[::-1]     # 아래=0Hz, 위=fs/2 (GUI 의 Y MAX)
+lo = float(np.percentile(db, 25))               # 바닥 근처를 검정으로
+rg = float(max(10.0, min(35.0, np.percentile(db, 99.5) - lo)))  # 자동 대비 -- 고정 35dB 는
+img = np.clip((db - lo) / rg, 0, 1)[::-1]       # 6dB 급 차이를 씻어내 GUI 와 비교가 안 된다
+#   (아래=0Hz, 위=fs/2 = GUI 의 Y MAX)
 k = max(1, img.shape[1] // 4000)                # 폭 ~4000픽셀 제한: 열 최대값 풀링이라
 img = img[:, :img.shape[1] // k * k].reshape(img.shape[0], -1, k).max(2)   # 버스트는 남는다
 png_gray(img * 255, name + ".png")
 line = (f"strip {'kat' if arg == 'kat' else 'cap'} n{x.size} f{fs:.0f}"
-        f" s{x.size / fs:.1f} px{img.shape[1]}x{img.shape[0]} lo{round(lo)}")
+        f" s{x.size / fs:.1f} px{img.shape[1]}x{img.shape[0]} lo{round(lo)} rg{round(rg)}")
 print(f"{line} #{check_code(line)}")
 print(f"{name}.png 저장 — 이미지 뷰어로 열어 GUI 와 나란히 비교. s 값(초)이 GUI 가 보여주는"
       " 파일 길이와 다르면 샘플 해석(비트수/채널)이 다른 것이다")
