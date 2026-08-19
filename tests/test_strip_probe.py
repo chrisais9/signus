@@ -38,9 +38,9 @@ def test_kat_is_deterministic_and_self_checking(tmp_path):
     line = out1.splitlines()[0]
     m = re.fullmatch(r"(strip kat .*) #([0-9a-z]{4})", line)
     assert m and check_code(m.group(1)) == m.group(2)
-    assert " rg" in line                         # 자동 대비 폭 — 회신으로 GUI 대비와 견준다
+    assert " rg" in line and " fb" in line       # 자동 대비 폭 + find_bursts 검출 수
     assert " s6.0 " in line                      # 길이(초) — GUI 파일 길이와 대조하는 값
-    assert _png_size(tmp_path / "strip-kat.png") == (467, 129)
+    assert _png_size(tmp_path / "strip-kat.png") == (467, 141)   # 129 + 구분 2 + 검출띠 10
 
 
 def test_capture_render_matches_duration_and_size(tmp_path):
@@ -56,7 +56,7 @@ def test_capture_render_matches_duration_and_size(tmp_path):
     assert rc == 0, out
     assert " s20.0 " in out and "strip cap " in out
     w, h = _png_size(tmp_path / (cap.name + ".png"))
-    assert h == 129 and 1500 <= w <= 1600        # (200000-256)//128+1 = 1561열
+    assert h == 141 and 1500 <= w <= 1600        # (200000-256)//128+1 = 1561열
 
 
 def test_transcription_budget():
