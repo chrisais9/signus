@@ -1,6 +1,6 @@
 {
  "date": "2026-08-22",
- "head": "3efd967+수정중",
+ "head": "b1e550e+수정중",
  "files": {
   "pyproject.toml": "3565bf49dd97",
   "signus/__init__.py": "29c12d294e8a",
@@ -24,6 +24,6 @@
   "signus/web/style.css": "c1dff10b538b",
   "signus/web/app.js": "a2c3c185631c",
   "probes/sigc.py": "60a494fb9bba",
-  "probes/sa.py": "573fa2e47196"
+  "probes/sa.py": "7944ee044816"
  }
 }

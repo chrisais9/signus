@@ -13,7 +13,9 @@ import numpy as np
 from scipy.signal import stft, welch
 
 from signus import dsp, sigio
+from signus.chirp import is_chirp, sweeps_band
 from signus.cli import check_code
+from signus.fsk import fsk_gate
 
 GLYPH = {"0": (14, 17, 19, 21, 25, 17, 14), "1": (4, 12, 4, 4, 4, 4, 14),
          "2": (14, 17, 1, 2, 4, 8, 31), "3": (31, 2, 4, 2, 1, 17, 14),
@@ -65,10 +67,26 @@ def panel(fvals, dbvals, wp=500, hp=120, grid=()):
 
 
 def peak(fv, dbv, fmin=20.0):
-    """판 하나의 최대 바늘: 주파수(Hz)와 중앙값 대비 돌출(dB) -- 숫자로 받아칠 수 있게."""
+    """판 하나의 최대 바늘: (주파수 Hz, 중앙값 대비 돌출 dB) -- 숫자로 받아칠 수 있게."""
     ok = fv >= fmin
     i = int(np.argmax(dbv[ok]))
-    return f"f{round(float(fv[ok][i]))} d{round(float(dbv[ok][i] - np.median(dbv[ok])))}"
+    return round(float(fv[ok][i])), round(float(dbv[ok][i] - np.median(dbv[ok])))
+
+
+def verdict(z, fs, d2, d4, d8, dam):
+    """바늘 돌출로 버스트의 변조 부류를 판정 -- 문턱은 합성 배터리로 캘리브레이션
+    (bpsk d2 54 / qpsk d4 38 / 16qam d4 30 / 8psk d8 29 / fsk am 17, 광대역 잡음꼴 무바늘)."""
+    if is_chirp(z, fs) and sweeps_band(z, fs):
+        return "chirp"                          # 처프/LoRa 류 -- 성상도 복조 대상 아님
+    if fsk_gate(z, fs):
+        return "fsk"
+    if d2 >= 35 and d2 >= d4 + 5:
+        return "bpsk"
+    if d4 >= 28:
+        return "qpsk"                           # qpsk 또는 사각 QAM (4차에서 무너짐)
+    if d8 >= 24:
+        return "8psk"
+    return "lin" if dam >= 25 else "flat"       # lin=선형(차수불명) / flat=바늘 없음(잡음꼴)
 
 
 def burst_row(z, fs, label):
@@ -84,12 +102,17 @@ def burst_row(z, fs, label):
         fold = np.maximum(mag[:half], np.r_[mag[0], mag[1:half][::-1] * 0
                                             + mag[half + 1:][::-1]])
         ps.append(panel(f[:half], 20 * np.log10(fold + 1e-12), grid=grid))
-        nums.append(f"p{m} " + peak(f[:half], 20 * np.log10(fold + 1e-12)))
+        pf, pd = peak(f[:half], 20 * np.log10(fold + 1e-12))
+        nums.append(f"p{m} f{pf} d{pd}")
     u = np.abs(z) ** 2
     u = u - u.mean()
     su = np.abs(np.fft.rfft(u * np.hanning(u.size), nfft))
     ps.append(panel(np.fft.rfftfreq(nfft, 1 / fs), 20 * np.log10(su + 1e-12), grid=grid))
-    nums.append("am " + peak(np.fft.rfftfreq(nfft, 1 / fs), 20 * np.log10(su + 1e-12)))
+    af, ad = peak(np.fft.rfftfreq(nfft, 1 / fs), 20 * np.log10(su + 1e-12))
+    nums.append(f"am f{af} d{ad}")
+    lab = verdict(z, fs, int(nums[0].split("d")[1]), int(nums[1].split("d")[1]),
+                  int(nums[2].split("d")[1]), ad)
+    nums.insert(0, lab)
     div = np.full((120, 4), 0.5)
     row = np.hstack(sum(([p, div] for p in ps[:-1]), []) + [ps[-1]])
     tag = np.zeros((120, 26))

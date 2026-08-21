@@ -42,9 +42,10 @@ def test_kat_is_deterministic_and_self_checking(tmp_path):
     blines = [ln for ln in out1.splitlines() if ln.startswith("sa b")]
     assert len(blines) == 2                     # 버스트별 판독 숫자줄 (검출 코드 포함)
     for ln in blines:
-        mm = re.fullmatch(r"(sa b\d+ p2 f\d+ d-?\d+ p4 f\d+ d-?\d+ p8 f\d+ d-?\d+"
+        mm = re.fullmatch(r"(sa b\d+ [a-z0-9]+ p2 f\d+ d-?\d+ p4 f\d+ d-?\d+ p8 f\d+ d-?\d+"
                           r" am f\d+ d-?\d+) #([0-9a-z]{4})", ln)
         assert mm and check_code(mm.group(1)) == mm.group(2), ln
+    assert " bpsk " in blines[0] and " qpsk " in blines[1]   # 자동 판정 라벨
     assert " p2 f1100 " in blines[0]             # BPSK: x² 바늘이 정확히 2·fc=1100Hz
     assert " p4 f2200 " in blines[1]             # QPSK: x⁴ 바늘이 4·fc=2200Hz
     assert " am f294 " in blines[0]              # 심볼레이트 10000/34
