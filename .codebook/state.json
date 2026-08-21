@@ -1,10 +1,10 @@
 {
- "date": "2026-08-13",
- "head": "ebe6e5e+수정중",
+ "date": "2026-08-21",
+ "head": "fe6c42d+수정중",
  "files": {
   "pyproject.toml": "3565bf49dd97",
   "signus/__init__.py": "29c12d294e8a",
-  "signus/sigio.py": "29bb96b21ddc",
+  "signus/sigio.py": "f4465af9100a",
   "signus/constellations.py": "b35bfa4b0cfa",
   "signus/spectrum.py": "6d95b24788ed",
   "signus/detect.py": "c297098bb8e7",

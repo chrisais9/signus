@@ -278,3 +278,21 @@ def test_save_writes_blind_name_and_sidecar(tmp_path):
     assert np.iscomplexobj(x) and meta.fs == 1e6
     sc = sidecar_read(path)
     assert sc["truth"] == {"mod": "16qam", "fc": 8000, "baud": 1e5, "rolloff": 0.35, "snr": 20}
+
+
+def test_default_endian_comes_from_env_and_tokens_win(monkeypatch):
+    """실장비 녹음기는 BE 16비트다(2026-08-21 확정 — 154초 캡처가 LE 로 읽혀 균등분포
+    잡음으로 보였다). 파일마다 .be 를 붙이는 대신 SIGNUS_ENDIAN 으로 기본을 정하되,
+    파일명 토큰(.be/.le)은 언제나 환경변수보다 우선한다."""
+    from signus.sigio import parse_name
+    monkeypatch.delenv("SIGNUS_ENDIAN", raising=False)
+    assert parse_name("cap.real.10000.16t.pcm").endian == "le"
+    monkeypatch.setenv("SIGNUS_ENDIAN", "be")
+    assert parse_name("cap.real.10000.16t.pcm").endian == "be"
+    assert parse_name("cap.real.10000.16t.le.pcm").endian == "le"     # 토큰이 이긴다
+    monkeypatch.setenv("SIGNUS_ENDIAN", "le")
+    assert parse_name("cap.real.10000.16t.be.pcm").endian == "be"
+    monkeypatch.setenv("SIGNUS_ENDIAN", "big")                         # 오타는 시끄럽게
+    import pytest
+    with pytest.raises(ValueError):
+        parse_name("cap.real.10000.16t.pcm")

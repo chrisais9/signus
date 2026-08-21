@@ -1,6 +1,7 @@
 """Sample file I/O. Filename carries read-necessities ONLY (fs, cplx|real, sample
 type, endian, bitrev); ground truth lives in a `<filename>.json` sidecar the
-analyzer never reads. SigMF sidecars (`<stem>.sigmf-meta`) are also understood."""
+analyzer never reads. SigMF sidecars (`<stem>.sigmf-meta`) are also understood.
+Endianness falls back to SIGNUS_ENDIAN when the filename carries no .be/.le token."""
 
 import json
 import os
@@ -79,7 +80,13 @@ def parse_name(name: str) -> Meta:
     tail = toks[i + 1:] if i is not None else toks   # 제원은 포맷 토막 **뒤**에만 산다 --
     m.dtype = next((_ALIAS.get(t, t) for t in tail   # 라벨의 u8/f32/be 가 제원을 오염 못 하게
                     if t in _DTYPES or t in _ALIAS), "i16")
-    m.endian = "be" if "be" in tail else "le"
+    # 엔디안: 파일명 토큰(.be/.le)이 최우선, 없으면 SIGNUS_ENDIAN, 그것도 없으면 le.
+    # 실장비 녹음기는 BE 라 장비에서는 export SIGNUS_ENDIAN=be 한 줄로 전 파일이 읽힌다
+    # (2026-08-21: BE 캡처를 LE 로 읽어 균등분포 잡음으로 보이던 사고 뒤에 넣었다).
+    env = os.environ.get("SIGNUS_ENDIAN", "le").lower()
+    if env not in ("le", "be"):
+        raise ValueError(f"SIGNUS_ENDIAN 은 le 또는 be 여야 합니다: {env!r}")
+    m.endian = "be" if "be" in tail else ("le" if "le" in tail else env)
     m.bitrev = "bitrev" in tail
     return m
 
