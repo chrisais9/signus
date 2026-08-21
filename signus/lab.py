@@ -204,7 +204,7 @@ def _sweep(args: argparse.Namespace) -> int:
 
 def _gen(args: argparse.Namespace) -> int:
     if args.fmt == "real" and args.cfo <= args.baud * (1 + args.rolloff) / 2:
-        print("real 포맷은 통과대역 반송파가 필요합니다: --cfo > baud*(1+rolloff)/2")
+        print("real 포맷은 통과대역 중심주파수(반송파)가 필요합니다: --cfo > baud*(1+rolloff)/2")
         return 1
     taps = tuple(complex(t) for t in args.taps.split(",")) if args.taps else ()
     p = GenParams(mod=args.mod, n_symbols=args.n, fs=args.fs, baud=args.baud,

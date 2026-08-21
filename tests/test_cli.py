@@ -83,7 +83,7 @@ def test_cli_real_pcm_roundtrip(tmp_path, capsys):
 
 def test_cli_gen_real_requires_carrier(capsys):
     assert main(["gen", "--fmt", "real", "--cfo", "0", "--out", "/tmp/x"]) == 1
-    assert "반송파" in capsys.readouterr().out
+    assert "중심주파수" in capsys.readouterr().out
 
 
 def test_cli_analyze_with_overrides(tmp_path, capsys):
@@ -114,7 +114,7 @@ def test_cli_survey_wideband_file(tmp_path, capsys):
     rep = str(tmp_path / "s.json")
     assert main(["survey", str(f), "--report", rep]) == 0
     printed = capsys.readouterr().out
-    assert "2개 신호 감지" in printed and "qpsk" in printed and "16qam" in printed
+    assert "방사체 2개" in printed and "qpsk" in printed and "16qam" in printed
     doc = json.loads((tmp_path / "s.json").read_text())
     assert doc["n_emitters"] == 2
     mods = {e.get("mod") for e in doc["emitters"]}

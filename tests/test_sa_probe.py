@@ -1,4 +1,4 @@
-"""종합 관찰 프로브(tools/sa_probe.py) — 스펙트로그램+검출+버스트별 변조 판독 한 장."""
+"""종합 관찰 프로브(probes/sa.py) — 스펙트로그램+검출+버스트별 변조 판독 한 장."""
 
 import re
 import struct
@@ -15,7 +15,7 @@ from signus.gen import GenParams, generate  # noqa: E402
 from signus.sigio import Meta, make_name, write  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-PROBE = ROOT / "tools" / "sa_probe.py"
+PROBE = ROOT / "probes" / "sa.py"
 
 
 def _run(args, cwd):

@@ -265,7 +265,7 @@ _KAT_HINT = {
 def kat_diff(doc: dict[str, dict[str, int]]) -> int:
     """kat 회신을 개발기에서 직접 돌린 기준 4줄과 필드 단위로 대조 — 어긋난 필드마다
     프로브의 어느 소스 구간을 다시 볼지 짚는다. 표지와 눈으로 견주는 일을 자동화한 것."""
-    r = subprocess.run([sys.executable, str(_ROOT / "tools" / "sigc_probe.py"), "kat"],
+    r = subprocess.run([sys.executable, str(_ROOT / "probes" / "sigc.py"), "kat"],
                        capture_output=True, text=True, env={"PYTHONPATH": str(_ROOT)})
     ref, _, _ = parse(r.stdout)
     diffs = 0

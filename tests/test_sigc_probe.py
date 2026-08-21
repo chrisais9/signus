@@ -1,4 +1,4 @@
-"""장비용 관찰 프로브(tools/sigc_probe.py)와 개발기 수신 도구(tools/sigc.py).
+"""장비용 관찰 프로브(probes/sigc.py)와 개발기 수신 도구(tools/sigc.py).
 
 프로브는 장비에서 손으로 필사되는 파일이라 여기서는 서브프로세스(CLI 계약)로만 검증한다.
 시나리오 합성은 프로브/도구와 코드를 공유하지 않고 이 파일 안에서 직접 조립한다
@@ -18,7 +18,7 @@ from signus.gen import GenParams, generate
 from signus.sigio import Meta, make_name, write
 
 ROOT = Path(__file__).resolve().parent.parent
-PROBE = ROOT / "tools" / "sigc_probe.py"
+PROBE = ROOT / "probes" / "sigc.py"
 TOOL = ROOT / "tools" / "sigc.py"
 FS = 1e6
 

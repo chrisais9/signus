@@ -92,6 +92,10 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("signus/web/style.css", "UI 스타일"),
         ("signus/web/app.js", "업로드 · 분석 요청 · 성상도/워터폴 캔버스 렌더링"),
     ]),
+    ("8 · 장비 프로브 (signus/ 옆에 같은 이름으로 저장)", [
+        ("probes/sigc.py", "특징 4줄 + 단계 관찰 — 회신은 맥의 tools/sigc.py check"),
+        ("probes/sa.py", "종합 관찰: 스펙트로그램+검출 띠+버스트별 x²·x⁴·x⁸·AM 판독"),
+    ]),
 ]
 
 # 개발기 전용 -- 인쇄물·격리망 장비에는 절대 싣지 않는다 (2026-08-03 사용자 결정).

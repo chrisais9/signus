@@ -44,8 +44,8 @@ echo "<받은 줄>" | tools/brief.py check      # 제일 먼저 이걸 돌린다
 - 재현 없이 추측으로 고치지 않는다.
 - **`sigc a/b/c/d` 4줄**(관찰 프로브 회신)이 오면 `tools/sigc.py check` 가 먼저다 — 줄 단위
   오타 검증 + find_bursts 의 어느 출구가 `[(0,n)]` 을 냈는지 해석. 특징 재현 데이터셋은
-  `tools/sigc.py gen --out <디렉터리>` (즉석 find_bursts 채점 포함). 프로브 재발급은
-  `tools/probe_pdf.py`.
+  `tools/sigc.py gen --out <디렉터리>` (즉석 find_bursts 채점 포함). 상시 프로브
+  (`probes/sigc.py`·`probes/sa.py`)는 코드북 대상이라 수정이 코드-변경분 PDF 로 흘러간다.
 
 ## 깨뜨리면 안 되는 규칙
 
@@ -76,6 +76,8 @@ echo "<받은 줄>" | tools/brief.py check      # 제일 먼저 이걸 돌린다
   채팅 텍스트만으로 건네지 않는다. 코드북 대상이 아니면 `tools/codebook.py` 의 렌더러
   (`codebook_rows`/`page_html`/`to_pdf`)를 재사용해 표지(쓰는 법·기대값) + 코드 쪽으로 만든다.
   출력을 손으로 받아쳐야 하는 프로브에는 sig2 검출 코드처럼 **자기검증값(KAT)을 내장**한다.
+  상시 쓰는 프로브는 `probes/` + 코드북 SECTIONS 에 올려 **코드-변경분 하나로** 관리한다
+  (2026-08-22 사용자 지시 — PDF 를 종류별로 늘리지 않는다).
 - **합성 신호 생성기와 채점 코드(`signus/gen.py`, `signus/lab.py`)도 넣지 않는다**
   (2026-08-03 사용자 지시). 그 코드는 개발기(Claude 가 도는 쪽)의 테스트·정합성 확인에만
   쓴다. 장비에서 `sweep` 자체 검증이 사라지는 대가로 필사 분량을 줄인 결정이다.

@@ -22,7 +22,7 @@ from signus.gen import GenParams, generate  # noqa: E402
 from signus.sigio import Meta, make_name, write  # noqa: E402
 
 FS, N = 1e6, 65536
-PROBE = ROOT / "tools" / "sigc_probe.py"
+PROBE = ROOT / "probes" / "sigc.py"
 
 
 def _qpsk(fc: float, baud: float, seed: int) -> np.ndarray:

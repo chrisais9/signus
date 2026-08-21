@@ -74,25 +74,27 @@ def _analyze(args: argparse.Namespace) -> int:
     d = j["detected"]
     truth = (sidecar_read(args.file) or {}).get("truth")  # display only, never detection
     if len(r.bursts) > 1:
-        print(f"버스트 {len(r.bursts)}개 감지 — {r.burst_idx + 1}번째 분석 (--burst N 으로 선택)")
-    print(f"모드      {d['mod']}" + (f"   (정답 {truth['mod']})" if truth else ""))
-    print(f"반송파    {d['fc']:.1f} Hz" + (f"   (정답 {truth['fc']:.1f})" if truth else ""))
+        print(f"시간상 버스트 {len(r.bursts)}개 — 그중 {r.burst_idx + 1}번을 분석"
+              " (--burst N 으로 선택)")
+    print(f"변조       {d['mod']}" + (f"   (정답 {truth['mod']})" if truth else ""))
+    print(f"중심주파수 {d['fc']:.1f} Hz" + (f"   (정답 {truth['fc']:.1f})" if truth else ""))
     if d["rf_hz"] is not None:
         print(f"실제 RF   {d['rf_hz'] / 1e6:.6f} MHz")
-    print(f"심볼레이트 {d['baud']:.1f} Hz" + (f"   (정답 {truth['baud']:.1f})" if truth else ""))
+    print(f"baud       {d['baud']:.1f} Hz" + (f"   (정답 {truth['baud']:.1f})" if truth else ""))
     fsk = r.family == "fsk"
     tail = f"변조지수 h {d['h']:.2f}" if fsk else f"롤오프    {d['rolloff']:.2f}"
     mer = "" if fsk else f"   MER {r.mer_db:.1f} dB"
     print(f"{tail}   lock {r.lock:.1f}{mer}")
     if r.eq_applied:
-        print("등화기 적용: 다중경로 ISI 보정됨"
+        print("다중경로 보정(등화기) 적용"
               + (" (T/2 분수간격)" if r.eq_mode == "fse" else " (심볼간격)"))
     if r.alias_resolved:
-        print("반송파 앨리어스 보정: 스펙트럼 중심으로 후보 선택")
+        print("중심주파수 접힘(앨리어스) 보정: 후보 중 스펙트럼 무게중심에 맞는 것을 선택")
     if r.baud_fallback:
-        print("심볼레이트 폴백: 점유대역폭 사전정보로 재탐색")
+        print("baud 폴백: 스펙트럼에서 baud 선을 못 찾아 점유대역폭으로 추정 — baud 신뢰 낮음")
     if r.carrier_ambiguous:
-        print("경고: 반송파 앨리어싱 가능 (|sym*fc| > 0.4*fs)")
+        print("경고: 중심주파수가 접혀 있을 수 있음 — fs 에 비해 너무 높다"
+              " (fc 를 그대로 믿지 말 것)")
     if args.save_iq:
         r.save_iq(args.save_iq)
     if args.save_symbols:
@@ -121,9 +123,10 @@ def _survey(args: argparse.Namespace) -> int:
                     "be" if args.be else None, args.bitrev or None, args.diff, rf=args.rf)
     rf0 = s.meta.rf_center
     note = f" · RF 중심 {rf0 / 1e6:.3f} MHz" if rf0 is not None else ""
-    print(f"{len(s.emitters)}개 신호 감지 (샘플레이트 {s.meta.fs:.0f} Hz{note})")
+    print(f"주파수상 방사체 {len(s.emitters)}개 — 시간상 버스트 수가 아님"
+          f" (샘플레이트 {s.meta.fs:.0f} Hz{note})")
     print(f"{'#':>2} {('실제 RF' if rf0 is not None else '중심주파수'):>12} {'대역폭':>10}"
-          f" {'분류':>7} {'변조':>7} {'심볼레이트':>11} {'lock':>5}")
+          f" {'분류':>7} {'변조':>7} {'baud':>11} {'lock':>5}")
     for i, e in enumerate(s.emitters):
         r = e.result
         mod = r.mod if r else "—"
