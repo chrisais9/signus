@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """sa.py(종합 관찰 프로브)를 필사용 PDF 로 발급한다 — codebook 조판 재사용 (맥/보드 전용).
 
-    .venv/bin/python tools/sa_pdf.py     # docs/signus-종합프로브-sa-필사용.pdf
+    .venv/bin/python tools/sa_pdf.py                  # docs/signus-종합프로브-sa-필사용.pdf
+    .venv/bin/python tools/sa_pdf.py --from git:REV   # 그 판 대비 변경분(바뀐 줄 녹색) PDF
 
 표지: 쓰는 법 + KAT 기대 줄·기대 그림(발급 때 실제 실행) + 판독 규칙 표 + 회신 양식.
 본문: 코드 전량. 발급 전 문자 대조 검증, 불일치면 중단. strip.py 를 대체한다.
@@ -96,5 +97,56 @@ def build() -> str:
                    .replace("%%BODY%%", cover + "\n" + "\n".join(pages))
 
 
+def build_diff(rev: str, note: str) -> str:
+    """필사된 옛 판 대비 변경분 — 코드북 변경분과 같은 규약: 파일 통째, 새 줄은 녹색(새 줄번호
+    볼드), 없어진 자리는 붉은 점선, 코드 칸에 +/- 접두사 없음(인덴트 보존)."""
+    import subprocess as sp
+    old = sp.run(["git", "-C", str(cb.ROOT), "show", f"{rev}:tools/sa_probe.py"],
+                 capture_output=True, text=True, check=True).stdout.replace("\t", " " * cb.TAB)
+    new = cb.read_src(SRC)
+    rows, n_add, n_del, changed = cb.diff_rows("sa.py", old, new)
+    if not rows:
+        raise SystemExit("변경 없음")
+    line, debug, _img = kat()
+    chunks = cb.paginate(rows)
+    cover = f"""<style>
+  .sa .kat {{ font-family: Menlo, monospace; font-size: 7.6pt; line-height: 10.5pt;
+              background: #f4f4f4; padding: 4pt 7pt; margin-top: 5pt; white-space: pre; }}
+</style><section class="page cover sa">
+  <div class="ctitle">sa <span class="cgray">변경분</span></div>
+  <div class="csub">필사해 둔 sa.py 에서 고칠 줄만 — 녹색 줄을 새 줄번호 자리에 써 넣으면 된다</div>
+  <div class="cmeta">{html.escape(rev)} &#160;→&#160; {date.today().isoformat()} ·
+    {cb.git_head()} &#160;|&#160; <b>+{n_add}</b> / −{n_del} 줄 · 코드 {len(chunks)}쪽 ·
+    새로 쓸 줄 {html.escape(cb.ranges(changed))}</div>
+  <div class="cwhat"><div class="wt">바뀐 내용</div><div>·&#160; {html.escape(note)}</div></div>
+  <div class="cnote"><span class="lg add">초록</span> = 새로 쓸 줄 (오른쪽 숫자가 새 줄번호)
+    &#160;·&#160; 색 없는 줄 = 그대로 &#160;·&#160; <span class="lg cut">붉은 점선</span> =
+    그 자리에서 줄이 사라짐 &#160;·&#160; <span class="mono">{cb.CONT_MARK}</span> = 윗줄에 붙는
+    이어짐. 고친 뒤 <span class="mono">python3 sa.py kat</span> 이 아래와 같아야 한다.</div>
+  <div class="kat">{html.escape(debug)}</div>
+</section>"""
+    pages = [cover]
+    for pno, chunk in enumerate(chunks, 2):
+        body = []
+        for kind, o_no, n_no, cell in chunk:
+            base = kind.split()[0]
+            body.append(f'<div class="dn {kind}">{html.escape(o_no)}</div>'
+                        f'<div class="dn {kind}">{html.escape(n_no)}</div>'
+                        f'<div class="dm {kind}">{"+" if base == "add" else ""}</div>'
+                        f'<div class="cd {kind}">{cell}</div>')
+        pages.append(cb.page_html("sa.py", f"변경분 &#160;·&#160; {pno - 1}/{len(chunks)}",
+                                  f'<div class="dg">\n{"".join(body)}\n</div>', pno))
+    return cb.SHELL.replace("%%TITLE%%", "sa 변경분").replace("%%BODY%%", "\n".join(pages))
+
+
 if __name__ == "__main__":
-    cb.to_pdf(build(), OUT)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--from", dest="base", help="git:<rev> — 필사된 옛 판")
+    ap.add_argument("--note", default="", help="변경분 표지의 '바뀐 내용' 한 문장")
+    a = ap.parse_args()
+    if a.base:
+        cb.to_pdf(build_diff(a.base.removeprefix("git:"), a.note),
+                  cb.DOCS / "signus-종합프로브-sa-변경분.pdf")
+    else:
+        cb.to_pdf(build(), OUT)
