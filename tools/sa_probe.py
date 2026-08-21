@@ -64,12 +64,19 @@ def panel(fvals, dbvals, wp=500, hp=120, grid=()):
     return img
 
 
+def peak(fv, dbv, fmin=20.0):
+    """판 하나의 최대 바늘: 주파수(Hz)와 중앙값 대비 돌출(dB) -- 숫자로 받아칠 수 있게."""
+    ok = fv >= fmin
+    i = int(np.argmax(dbv[ok]))
+    return f"f{round(float(fv[ok][i]))} d{round(float(dbv[ok][i] - np.median(dbv[ok])))}"
+
+
 def burst_row(z, fs, label):
     """한 버스트의 판독 행: [PSD | x^2 | x^4 | x^8 | AM]. x^m 은 음수 주파수를 접는다."""
     grid = tuple(fs / 2 * k / 5 for k in (1, 2, 3, 4))
     fr, praw = welch(z.real, fs=fs, nperseg=min(2048, z.size))
     ps = [panel(fr, 10 * np.log10(praw + 1e-18), grid=grid)]
-    nfft = 1 << 15
+    nfft, nums = 1 << 15, []
     f = np.fft.fftfreq(nfft, 1 / fs)
     half = nfft // 2
     for m in (2, 4, 8):
@@ -77,15 +84,17 @@ def burst_row(z, fs, label):
         fold = np.maximum(mag[:half], np.r_[mag[0], mag[1:half][::-1] * 0
                                             + mag[half + 1:][::-1]])
         ps.append(panel(f[:half], 20 * np.log10(fold + 1e-12), grid=grid))
+        nums.append(f"p{m} " + peak(f[:half], 20 * np.log10(fold + 1e-12)))
     u = np.abs(z) ** 2
     u = u - u.mean()
     su = np.abs(np.fft.rfft(u * np.hanning(u.size), nfft))
     ps.append(panel(np.fft.rfftfreq(nfft, 1 / fs), 20 * np.log10(su + 1e-12), grid=grid))
+    nums.append("am " + peak(np.fft.rfftfreq(nfft, 1 / fs), 20 * np.log10(su + 1e-12)))
     div = np.full((120, 4), 0.5)
     row = np.hstack(sum(([p, div] for p in ps[:-1]), []) + [ps[-1]])
     tag = np.zeros((120, 26))
     draw_text(tag, 4, 4, label)
-    return np.hstack([tag, row])
+    return np.hstack([tag, row]), " ".join(nums)
 
 
 if len(sys.argv) < 2:
@@ -151,7 +160,9 @@ rows = [mark, spec, np.full((2, ncol), 0.35), np.tile(lane, (10, 1)),
 width = max(ncol, pw_row)
 rows = [np.pad(r, ((0, 0), (0, width - r.shape[1]))) for r in rows]
 for i in pick:
-    r = burst_row(xa[fb[i][0]:fb[i][1]], fs, str(i + 1))
+    r, num = burst_row(xa[fb[i][0]:fb[i][1]], fs, str(i + 1))
+    ln = f"sa b{i + 1} {num}"              # 바늘 주파수·돌출 -- 받아칠 판독 숫자줄
+    print(f"{ln} #{check_code(ln)}")
     rows += [np.pad(r, ((0, 0), (0, width - r.shape[1]))), np.full((6, width), 0.0)]
 png_gray(np.vstack(rows), name + ".png")
 line = (f"sa {'kat' if arg == 'kat' else 'cap'} n{n} f{fs:.0f} s{n / fs:.1f}"

@@ -39,6 +39,15 @@ def test_kat_is_deterministic_and_self_checking(tmp_path):
     m = re.fullmatch(r"(sa kat .*) #([0-9a-z]{4})", line)
     assert m and check_code(m.group(1)) == m.group(2)
     assert " fb2 " in line                       # BPSK·QPSK 버스트 둘 다 검출
+    blines = [ln for ln in out1.splitlines() if ln.startswith("sa b")]
+    assert len(blines) == 2                     # 버스트별 판독 숫자줄 (검출 코드 포함)
+    for ln in blines:
+        mm = re.fullmatch(r"(sa b\d+ p2 f\d+ d-?\d+ p4 f\d+ d-?\d+ p8 f\d+ d-?\d+"
+                          r" am f\d+ d-?\d+) #([0-9a-z]{4})", ln)
+        assert mm and check_code(mm.group(1)) == mm.group(2), ln
+    assert " p2 f1100 " in blines[0]             # BPSK: x² 바늘이 정확히 2·fc=1100Hz
+    assert " p4 f2200 " in blines[1]             # QPSK: x⁴ 바늘이 4·fc=2200Hz
+    assert " am f294 " in blines[0]              # 심볼레이트 10000/34
     w, h = _png_ok(tmp_path / "sa-kat.png")
     assert w >= 2500 and h > 300                 # 스트립 + 판독 2행
 
