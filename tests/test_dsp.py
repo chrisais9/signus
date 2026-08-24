@@ -360,3 +360,22 @@ def test_ddsync_converges_and_is_qam_safe():
     before = _nearest(q, "16qam")
     after = _nearest(dsp.ddsync(q, "16qam"), "16qam")
     assert after < before * 1.2
+
+
+def test_occupied_bw_stops_at_gap_before_far_spur():
+    """문서대로 'DC 에서 바깥으로 걷다 >20빈 틈에서 멈춰야' 한다. 틈 정지가 없으면 대역 밖
+    스퍼 하나(믹싱된 LO 누설이 -fc 에 떨어지는 실측 사례)가 bw 를 두 배로 부풀리고,
+    참 baud 가 '대역폭과 불일치' 로 기각돼 폴백이 잡동사니를 좇는다 (실장비 bd2744 사고)."""
+    rng = np.random.default_rng(8)
+    p = GenParams(mod="qpsk", n_symbols=3200, fs=1e4, baud=1296.0, fc=0.0, rolloff=0.39,
+                  snr=90.0, fmt="iq", dtype="f32", seed=2)
+    s, _ = generate(p)
+    s = s[:24000] / np.sqrt(np.mean(np.abs(s[:24000]) ** 2))
+    n = s.size
+    x = s * 10 ** (14 / 20) + (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+    clean = dsp.occupied_bw(x, 1e4)
+    assert 1296 * 1.1 <= clean <= 1296 * 1.6           # ~baud*(1+rolloff) 근방
+    leak = 0.2 * np.sqrt(np.mean(np.abs(x) ** 2)) \
+        * np.exp(-2j * np.pi * 1944 * np.arange(n) / 1e4)
+    spurred = dsp.occupied_bw(x + leak, 1e4)
+    assert abs(spurred - clean) <= 0.15 * clean        # 틈 너머 스퍼는 bw 를 못 부풀린다

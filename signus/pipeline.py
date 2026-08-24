@@ -110,7 +110,7 @@ class Result:
             "burst_idx": self.burst_idx,
             "detected": det,
             "quality": {"lock": _r(self.lock, 1) or 0.0, "mer_db": _r(self.mer_db),
-                        "evm": _r(self.evm, 4)},
+                        "evm": _r(self.evm, 4), "occupied": int(self.occupied)},
             "snr_est_db": _r(self.snr_est),
             "eq": {"applied": self.eq_applied, "mode": self.eq_mode},
             "constellation": {"i": np.round(z.real, 4).tolist(),
