@@ -299,7 +299,8 @@ def occupied_bw(x: np.ndarray, fs: float) -> float:
     idx = np.flatnonzero(pxx[order] > floor + 0.10 * (np.percentile(pxx, 90) - floor))
     if idx.size == 0:
         return 0.0
-    last = idx[-1]
+    gaps = np.flatnonzero(np.diff(idx) > 20)   # 틈 정지가 없으면 대역 밖 스퍼(믹싱돼
+    last = idx[gaps[0]] if gaps.size else idx[-1]   # -fc 에 떨어진 LO 누설)가 bw 를 부풀린다
     return float(2 * np.abs(f[order][last]))
 
 
