@@ -10,13 +10,12 @@ import json
 from dataclasses import dataclass, field
 
 import numpy as np
+from scipy.signal import firwin, resample_poly
 
 from . import classify as cl
-from . import dsp, triage
-from .channelize import extract
-from .chirp import analyze_chirp, is_chirp, sweeps_band
+from . import dsp
+from .chirp import _bw99, analyze_chirp, is_chirp, sweeps_band
 from .constellations import demap_bits, demap_diff_bits, mod_order
-from .detect import Detection, detect
 from .eq import equalize, equalize_fse
 from .fsk import analyze_fsk, fsk_gate
 from .sigio import Meta, parse_name, read
@@ -55,7 +54,7 @@ _DIFF_OF = {"bpsk": "dbpsk", "qpsk": "dqpsk"}  # pi4dqpsk arrives as qpsk -> dqp
 @dataclass
 class Result:
     meta: Meta
-    family: str                    # 'linear' | 'fsk'
+    family: str                    # 'linear' | 'fsk' | 'chirp'
     burst: tuple[int, int]
     fc: float
     baud: float
@@ -81,6 +80,7 @@ class Result:
     bursts: list = field(default_factory=list)
     burst_idx: int = 0
     preamble: object = None        # sync.Preamble when a repeated preamble drove the decode
+    chirp: dict | None = None      # chirp/CSS characterization (family 'chirp': no symbols)
 
     def to_json(self, max_points: int = 6000, views: bool = True) -> dict:
         z = np.nan_to_num(self.symbols)   # a dead/DC capture -> NaN symbols -> invalid JSON
@@ -100,6 +100,10 @@ class Result:
             p = self.preamble
             det["preamble"] = {"period": p.period, "cfo_hz": round(p.cfo_hz, 1),
                                "conf": round(p.conf, 2), "start": p.start, "end": p.end}
+        if self.chirp is not None:      # chirp/CSS characterization -- no constellation fields
+            c = self.chirp
+            det["chirp"] = {"mu": _r(c["mu"], 1), "up": bool(c["up"]), "bw": _r(c["bw"], 1),
+                            "sf": c["sf"], "rs": _r(c["rs"], 1), "tsym": _r(c["tsym"], 6)}
         doc = {
             "fs": self.meta.fs, "fmt": self.meta.fmt, "dtype": self.meta.dtype,  # dtype 은 한 줄
             "rf_center": self.meta.rf_center,          # 보고에 필수: lock 0 의 1순위 용의자다
@@ -219,15 +223,31 @@ def analyze(x: np.ndarray, meta: Meta, diff: bool = False,
     s, e = bursts[burst]
     xb = x[s:e] if e - s >= 64 else x
 
-    # chirp gate -- same conjunctive tie-break as triage.family, so direct analyze / survey_web
-    # single mode agree with survey's label: an FMCW/CSS sweep trips fsk_gate (bimodal IF) and
-    # would force-demodulate into confident garbage FSK. sweeps_band keeps real FSK (0/222 pass)
-    # out of this branch, so only a genuine band-sweep is refused -- never demodulated.
-    if is_chirp(xb, meta.fs) and sweeps_band(xb, meta.fs):
-        info = analyze_chirp(xb, meta.fs)
-        kind = f"LoRa 추정 SF{info['sf']}" if info["sf"] else f"μ={info['mu']:.3g} Hz/s"
-        raise ValueError(f"처프(FMCW/CSS) 신호입니다 ({kind}, bw≈{info['bw']:.3g} Hz) — "
-                         "성상도 복조 대상이 아닙니다 (서베이 모드에서 특성 보고)")
+    # chirp gate: an FMCW/CSS sweep trips fsk_gate (bimodal IF) and would force-demodulate
+    # into confident garbage FSK. sweeps_band keeps real FSK (0/222 pass) out of this branch,
+    # so only a genuine band-sweep lands here -- characterized, never constellation-demodulated.
+    # The gates read a band-ISOLATED copy: mix to the spectral centroid, low-pass to the
+    # 99%-power band, and decimate so the signal fills ~28% of Nyquist. An off-centre
+    # narrowband sweep in a wide record otherwise dilutes the IF statistics with
+    # out-of-band noise and leaks through as garbage FSK.
+    pw = np.abs(np.fft.fft(xb)) ** 2                # sweep centre = spectral centroid
+    fr = np.fft.fftfreq(xb.size, 1 / meta.fs)       # (est_carrier means nothing on a mover)
+    fcg = float(np.sum(fr * pw) / (np.sum(pw) + 1e-30))
+    xg = dsp.mix(xb, meta.fs, fcg)
+    bwg = _bw99(xg, meta.fs)
+    want = max(1.25 * bwg, 1e-4 * meta.fs)
+    d = int(np.clip(0.28 * meta.fs / want, 1, max(1, xg.size // 256)))
+    fsg = meta.fs / d
+    xg = np.convolve(xg, firwin(129, max(min(0.9 * fsg / 2, bwg), 1e-4 * meta.fs)
+                                / (meta.fs / 2)), "same")
+    if d > 1:
+        xg = resample_poly(xg, 1, d)
+    if is_chirp(xg, fsg) and sweeps_band(xg, fsg):
+        info = analyze_chirp(xg, fsg)
+        return Result(meta, "chirp", (s, e), fcg, info["rs"] or 0.0,
+                      "lora" if info["sf"] else "chirp", 0.0, np.zeros(0, complex),
+                      np.zeros(0, np.uint8), x, burst_x=xb,
+                      bursts=bursts, burst_idx=burst, chirp=info)
 
     if fsk_gate(xb, meta.fs):
         r = analyze_fsk(xb, meta.fs)
@@ -386,113 +406,18 @@ def analyze_file(path: str, fs: float | None = None, fmt: str | None = None,
     return analyze(x, meta, diff, burst)
 
 
-# --- wideband survey: many emitters in one capture --------------------------
+# --- web payload -------------------------------------------------------------
 
-@dataclass
-class Emitter:
-    detection: Detection
-    kind: str                      # linear|fsk|chirp|analog|tone|tooshort|error
-    abs_fc: float                  # emitter carrier vs capture centre (Hz)
-    result: Result | None = None   # demod result for digital kinds
-    info: dict | None = None       # characterization for non-digital kinds (e.g. chirp params)
-
-    def to_json(self) -> dict:
-        d = self.detection
-        doc = {"kind": self.kind, "abs_fc": round(self.abs_fc, 3),
-               "det": {"fc": round(d.fc, 3), "bw": round(d.bw, 3),
-                       "t0": d.t0, "t1": d.t1, "snr_db": _r(d.snr_db),
-                       "baud_hint": round(d.baud_hint, 1)}}
-        if self.info is not None:
-            doc["info"] = self.info
-        if self.result is not None:
-            r = self.result
-            doc.update(mod=r.mod, baud=round(r.baud, 3), lock=round(r.lock, 1),
-                       mer_db=_r(r.mer_db), evm=_r(r.evm, 4), family=r.family)
-        return doc
-
-    def to_detail(self, rf_center: float | None = None) -> dict:
-        """Web drill-down payload: the box summary plus, for a digital emitter, the
-        full analyze result so the UI reuses its single-signal detail view verbatim.
-        The channel is demodulated at baseband (no rf_center), and r.fc is only the
-        residual within-channel offset -- so the emitter's absolute RF is the capture
-        centre plus abs_fc (the full offset from capture centre), injected here."""
-        doc = self.to_json()
-        if self.result is not None:
-            doc["result"] = self.result.to_json()
-            if rf_center is not None:
-                doc["result"]["detected"]["rf_hz"] = round(rf_center + self.abs_fc, 3)
-        return doc
-
-
-@dataclass
-class Survey:
-    meta: Meta
-    emitters: list[Emitter] = field(default_factory=list)
-
-    def to_json(self) -> dict:
-        return {"fs": self.meta.fs, "fmt": self.meta.fmt, "dtype": self.meta.dtype,
-                "n_emitters": len(self.emitters),
-                "emitters": [e.to_json() for e in self.emitters]}
-
-
-def survey(x: np.ndarray, meta: Meta, *, diff: bool = False, **detect_kw) -> Survey:
-    """Detect every emitter in a wideband capture, extract each to its own baseband
-    channel, and demodulate the digital ones with the unchanged single-signal chain.
-    A capture holding one signal that fills the band collapses to a single emitter."""
-    xa = dsp.analytic(x)
-    xa = xa - xa.mean()
-    emitters = []
-    for d in detect(xa, meta.fs, **detect_kw):
-        ch, fs_ch = extract(xa, meta.fs, d)
-        if ch.size < 256:
-            emitters.append(Emitter(d, "tooshort", d.fc))
-            continue
-        kind = triage.family(ch, fs_ch)
-        if kind in ("linear", "fsk"):
-            # triage only gates digital vs not; analyze's own family is authoritative.
-            # Isolate each channel: a degenerate one must not abort the whole survey.
-            try:
-                r = analyze(ch, Meta(fs_ch, "iq", "f32", "le", False), diff=diff)
-                emitters.append(Emitter(d, r.family, d.fc + r.fc, r))
-            except Exception:
-                emitters.append(Emitter(d, "error", d.fc))
-        else:
-            info = analyze_chirp(ch, fs_ch) if kind == "chirp" else None
-            emitters.append(Emitter(d, kind, d.fc, info=info))
-    return Survey(meta, emitters)
-
-
-def survey_web(x: np.ndarray, meta: Meta, *, diff: bool = False) -> dict:
-    """Web survey payload for /api/survey. When detect sees <=1 emitter the capture
-    is effectively one signal -> 'single' mode returns the UNCHANGED direct analyze()
-    result (correct fc, matches /api/analyze). Otherwise 'survey' mode adds a whole-
-    capture overview waterfall and every emitter's drill-down detail. Additive: does
-    not alter survey()/Survey/Emitter, so CLI + existing tests are unaffected."""
-    xa = dsp.analytic(x)
-    xa = xa - xa.mean()
-    if len(detect(xa, meta.fs)) <= 1:
-        r = analyze(x, meta, diff=diff)
-        out = {"mode": "single", "result": r.to_json()}
-        if len(r.bursts) > 1:   # multi-burst signal -> whole-record map for burst selection
-            out["overview"] = {"n": int(xa.size), "fs": meta.fs,
-                               "waterfall": waterfall(xa, meta.fs)}
-        return out
-    sv = survey(x, meta, diff=diff)
-    return {"mode": "survey", "fs": meta.fs, "fmt": meta.fmt, "rf_center": meta.rf_center,
-            "overview": {"fs": meta.fs, "n": int(xa.size), "spectrum": spectrum(xa, meta.fs),
-                         "waterfall": waterfall(xa, meta.fs)},
-            "emitters": [e.to_detail(meta.rf_center) for e in sv.emitters]}
-
-
-def survey_file(path: str, fs: float | None = None, fmt: str | None = None,
-                dtype: str | None = None, endian: str | None = None,
-                bitrev: bool | None = None, diff: bool = False,
-                rf: float | None = None) -> Survey:
-    """Survey a capture file; explicit args override SigMF/filename tokens."""
-    from .sigio import parse_sigmf
-    m = parse_sigmf(path) or parse_name(path)
-    meta = Meta(fs or m.fs, fmt or m.fmt, dtype or m.dtype,
-                endian or m.endian, m.bitrev if bitrev is None else bitrev,
-                rf_center=rf if rf is not None else m.rf_center)
-    x, meta = read(path, meta)
-    return survey(x, meta, diff=diff)
+def analyze_web(x: np.ndarray, meta: Meta, *, burst: int | None = None) -> dict:
+    """Payload for POST /api/analyze: the analyze() result as JSON, plus -- on the first
+    load of a multi-burst capture -- a whole-record waterfall so the UI can draw the burst
+    map. Burst re-selection posts again with ?burst=N and skips the overview (the UI keeps
+    the one it already has)."""
+    r = analyze(x, meta, burst=burst)
+    out = r.to_json()
+    if burst is None and len(r.bursts) > 1:
+        xa = dsp.analytic(x)
+        xa = xa - xa.mean()
+        out["overview"] = {"n": int(xa.size), "fs": meta.fs,
+                           "waterfall": waterfall(xa, meta.fs)}
+    return out

@@ -1,4 +1,4 @@
-"""CLI: analyze FILE / survey / serve. 합성·채점(gen/dataset/sweep)은 개발기 전용 lab.py 가
+"""CLI: analyze FILE / serve. 합성·채점(gen/dataset/sweep)은 개발기 전용 lab.py 가
 단다 — 격리망 장비에는 그 파일이 없어 명령 자체가 없다."""
 
 import argparse
@@ -7,7 +7,7 @@ import re
 import sys
 from zlib import crc32
 
-from .pipeline import analyze_file, survey_file
+from .pipeline import analyze_file
 from .sigio import sidecar_read
 
 _DTYPE_CHOICES = ("i8", "u8", "i16", "u16", "f32", "f64")
@@ -39,32 +39,22 @@ def brief(doc: dict, mode: str) -> str:
     """손으로 옮기는 한 줄 + 검출 코드. Result.to_json() 딕셔너리에서 만든다 -- 객체
     속성을 직접 포맷하면 to_json 이 이미 한 반올림과 두 번 겹쳐 장비와 맥이 갈린다."""
     head = f"sig2 {mode} fs{doc['fs']:.0f} {doc['fmt']}-{doc['dtype']}"
-    if mode == "sv":
-        lines = [f"{head} n{doc['n_emitters']}"]
-        for i, e in enumerate(doc["emitters"][:12]):
-            baud = f" bd{e['baud']:.0f}" if e.get("baud") else ""
-            lock = f" lk{e['lock']:.0f}" if e.get("lock") is not None else ""
-            lines.append(f"{i} fc{e['abs_fc']:.0f}{baud}{lock} {e.get('mod') or e['kind']}")
-        if len(doc["emitters"]) > 12:
-            lines.append(f"...{len(doc['emitters']) - 12}개 생략")
-    else:
-        d, q = doc["detected"], doc["quality"]
-        p = [head, d["mod"], f"fc{d['fc']:.0f}", f"bd{d['baud']:.0f}", f"lk{q['lock']:.0f}"]
-        if q["mer_db"] is not None:
-            p.append(f"mer{q['mer_db']:.1f}")
-        if d.get("h") is not None:                  # FSK 는 롤오프 대신 변조지수
-            p.append(f"h{d['h']:.2f}")
-        elif d["rolloff"] is not None:
-            p.append(f"rl{d['rolloff']:.2f}")
-        if len(doc["bursts"]) > 1:
-            p.append(f"b{doc['burst_idx'] + 1}/{len(doc['bursts'])}")
-        p += [f for f, get in _BRIEF_FLAGS if get(doc)]
-        lines = [" ".join(p)]
-    body = "\n".join(lines)
+    d, q = doc["detected"], doc["quality"]
+    p = [head, d["mod"], f"fc{d['fc']:.0f}", f"bd{d['baud']:.0f}", f"lk{q['lock']:.0f}"]
+    if q["mer_db"] is not None:
+        p.append(f"mer{q['mer_db']:.1f}")
+    if d.get("h") is not None:                  # FSK 는 롤오프 대신 변조지수
+        p.append(f"h{d['h']:.2f}")
+    elif d["rolloff"] is not None:
+        p.append(f"rl{d['rolloff']:.2f}")
+    if len(doc["bursts"]) > 1:
+        p.append(f"b{doc['burst_idx'] + 1}/{len(doc['bursts'])}")
+    p += [f for f, get in _BRIEF_FLAGS if get(doc)]
+    body = " ".join(p)
     return f"{body} #{check_code(body)}"
 
 
-# --- analyze / survey / serve --------------------------------------------------
+# --- analyze / serve -----------------------------------------------------------
 
 def _analyze(args: argparse.Namespace) -> int:
     r = analyze_file(args.file, args.fs, args.fmt, args.dtype,
@@ -76,15 +66,27 @@ def _analyze(args: argparse.Namespace) -> int:
     if len(r.bursts) > 1:
         print(f"시간상 버스트 {len(r.bursts)}개 — 그중 {r.burst_idx + 1}번을 분석"
               " (--burst N 으로 선택)")
-    print(f"변조       {d['mod']}" + (f"   (정답 {truth['mod']})" if truth else ""))
-    print(f"중심주파수 {d['fc']:.1f} Hz" + (f"   (정답 {truth['fc']:.1f})" if truth else ""))
-    if d["rf_hz"] is not None:
-        print(f"실제 RF   {d['rf_hz'] / 1e6:.6f} MHz")
-    print(f"baud       {d['baud']:.1f} Hz" + (f"   (정답 {truth['baud']:.1f})" if truth else ""))
-    fsk = r.family == "fsk"
-    tail = f"변조지수 h {d['h']:.2f}" if fsk else f"롤오프    {d['rolloff']:.2f}"
-    mer = "" if fsk else f"   MER {r.mer_db:.1f} dB"
-    print(f"{tail}   lock {r.lock:.1f}{mer}")
+    c = d.get("chirp")
+    if c:                               # 처프/CSS: 성상도 제원이 없다 — 특성으로 보고
+        print("변조       " + (f"LoRa 추정 SF{c['sf']}" if c["sf"] else "처프(FMCW/CSS)"))
+        print(f"중심주파수 {d['fc']:.1f} Hz")
+        if d["rf_hz"] is not None:
+            print(f"실제 RF   {d['rf_hz'] / 1e6:.6f} MHz")
+        print(f"점유대역폭 {c['bw']:.0f} Hz   방향 {'상승' if c['up'] else '하강'}"
+              f"   처프율 {c['mu']:.3g} Hz/s")
+        if c["sf"]:
+            print(f"심볼레이트 {c['rs']:.1f} Hz   심볼시간 {c['tsym'] * 1e3:.2f} ms")
+    else:
+        print(f"변조       {d['mod']}" + (f"   (정답 {truth['mod']})" if truth else ""))
+        print(f"중심주파수 {d['fc']:.1f} Hz" + (f"   (정답 {truth['fc']:.1f})" if truth else ""))
+        if d["rf_hz"] is not None:
+            print(f"실제 RF   {d['rf_hz'] / 1e6:.6f} MHz")
+        print(f"baud       {d['baud']:.1f} Hz"
+              + (f"   (정답 {truth['baud']:.1f})" if truth else ""))
+        fsk = r.family == "fsk"
+        tail = f"변조지수 h {d['h']:.2f}" if fsk else f"롤오프    {d['rolloff']:.2f}"
+        mer = "" if fsk else f"   MER {r.mer_db:.1f} dB"
+        print(f"{tail}   lock {r.lock:.1f}{mer}")
     if r.eq_applied:
         print("다중경로 보정(등화기) 적용"
               + (" (T/2 분수간격)" if r.eq_mode == "fse" else " (심볼간격)"))
@@ -108,46 +110,8 @@ def _analyze(args: argparse.Namespace) -> int:
     return 0
 
 
-def _fhz(v: float) -> str:
-    a = abs(v)
-    if a >= 1e6:
-        return f"{v / 1e6:+.3f} MHz"
-    if a >= 1e3:
-        return f"{v / 1e3:+.2f} kHz"
-    return f"{v:+.0f} Hz"
-
-
-def _survey(args: argparse.Namespace) -> int:
-    """Wideband survey: detect every emitter, demodulate the digital ones."""
-    s = survey_file(args.file, args.fs, args.fmt, args.dtype,
-                    "be" if args.be else None, args.bitrev or None, args.diff, rf=args.rf)
-    rf0 = s.meta.rf_center
-    note = f" · RF 중심 {rf0 / 1e6:.3f} MHz" if rf0 is not None else ""
-    print(f"주파수상 방사체 {len(s.emitters)}개 — 시간상 버스트 수가 아님"
-          f" (샘플레이트 {s.meta.fs:.0f} Hz{note})")
-    print(f"{'#':>2} {('실제 RF' if rf0 is not None else '중심주파수'):>12} {'대역폭':>10}"
-          f" {'분류':>7} {'변조':>7} {'baud':>11} {'lock':>5}")
-    for i, e in enumerate(s.emitters):
-        r = e.result
-        mod = r.mod if r else "—"
-        baud = f"{r.baud:.0f}" if r else "—"
-        lock = f"{r.lock:.0f}" if r else "—"
-        kind = {"linear": "디지털", "fsk": "FSK", "analog": "아날로그",
-                "tone": "순수톤", "tooshort": "너무짧음", "error": "오류"}.get(e.kind, e.kind)
-        fc = e.abs_fc if rf0 is None else rf0 + e.abs_fc
-        print(f"{i:>2} {_fhz(fc):>12} {_fhz(e.detection.bw):>10} {kind:>7}"
-              f" {mod:>7} {baud:>11} {lock:>5}")
-    if args.report:
-        import json
-        with open(args.report, "w") as fh:
-            json.dump(s.to_json(), fh, indent=1)
-    if args.brief:
-        print(brief(s.to_json(), "sv"))
-    return 0
-
-
 def _read_args(p: argparse.ArgumentParser) -> None:
-    """Read-side sample-format overrides, shared by analyze/survey (sidecar/filename win)."""
+    """Read-side sample-format overrides for analyze (sidecar/filename win)."""
     p.add_argument("--fs", type=float)
     p.add_argument("--fmt", choices=("iq", "real"))
     p.add_argument("--dtype", choices=_DTYPE_CHOICES)
@@ -174,12 +138,6 @@ def main(argv: list[str] | None = None) -> int:
                    help="차동 디맵(D-BPSK/D-QPSK): 회전 모호성 없이 비트 복원")
     a.add_argument("--burst", type=int, help="분석할 버스트 번호 (1부터; 기본 최강 버스트)")
 
-    sv = sub.add_parser("survey", help="광대역 캡처의 모든 신호 탐지 + 복조")
-    sv.add_argument("file")
-    _read_args(sv)
-    sv.add_argument("--diff", action="store_true", help="차동 디맵")
-    sv.add_argument("--report", help="JSON 리포트 저장 경로")
-
     s = sub.add_parser("serve", help="웹 UI 서버")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
@@ -194,8 +152,6 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.cmd == "analyze":
         return _analyze(args)
-    if args.cmd == "survey":
-        return _survey(args)
     if args.cmd == "serve":
         from .server import run
         run(args.host, args.port)
