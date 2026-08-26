@@ -76,7 +76,7 @@ def _otsu(v: np.ndarray, bins: int = 128) -> float:
 
 def _cell_power(x: np.ndarray, fs: float, nperseg: int = 256) -> tuple[np.ndarray, int, int]:
     """Waterfall cell power for detection: (P[fbin, col], hop, nperseg). nperseg
-    auto-shrinks on short records; shared core for find_bursts (and, later, survey)."""
+    auto-shrinks on short records; shared core for find_bursts."""
     nperseg = int(min(nperseg, max(64, 1 << int(np.log2(max(x.size // 2, 64))))))
     hop = nperseg // 2
     win = get_window("blackmanharris", nperseg)

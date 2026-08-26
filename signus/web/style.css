@@ -191,18 +191,18 @@ table.batch .fn { font-weight: 600; max-width: 210px; overflow: hidden;
 .dl-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .dl-row .btn { flex: 1; min-width: 120px; }
 
-/* Survey overview: waterfall + detected-emitter boxes */
+/* Burst map: whole-record waterfall + clickable burst boxes */
 .wf-wrap { position: relative; }
 .wf-wrap .fall { height: 230px; border-radius: 12px; }
 .boxes { position: absolute; inset: 0; pointer-events: none; }
 .box {
-  position: absolute; box-sizing: border-box; border: 2px solid var(--blue);
-  border-radius: 5px; background: rgba(49, 130, 246, .10); cursor: pointer;
+  position: absolute; box-sizing: border-box; border: 1px solid rgba(255, 255, 255, .55);
+  border-radius: 0; background: rgba(255, 255, 255, .06); cursor: pointer;
   pointer-events: auto; min-width: 7px; min-height: 12px;
   transition: background .12s, box-shadow .12s;
 }
 .box:hover, .box:focus-visible {
-  background: rgba(49, 130, 246, .24); box-shadow: 0 0 0 2px rgba(255, 255, 255, .55); outline: none;
+  background: rgba(255, 255, 255, .18); box-shadow: 0 0 0 1px #fff; outline: none;
 }
 .box-lbl {   /* hidden by default (a spectrogram full of labels is unreadable); shown on hover */
   position: absolute; top: -17px; left: -2px; white-space: nowrap; font-size: 10px;
@@ -210,27 +210,11 @@ table.batch .fn { font-weight: 600; max-width: 210px; overflow: hidden;
   border-radius: 6px; pointer-events: none; display: none; z-index: 2;
 }
 .box:hover .box-lbl, .box:focus-visible .box-lbl, .box.sel .box-lbl { display: block; }
-.box.sel { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--blue); }
-.box.ok { border-color: var(--green); background: rgba(18, 184, 134, .13); }
-.box.ok .box-lbl { background: var(--green); }
-.box.warn { border-color: var(--amber); background: rgba(245, 159, 0, .13); }
-.box.warn .box-lbl { background: var(--amber); }
-.box.bad { border-color: var(--red); background: rgba(250, 82, 82, .13); }
-.box.bad .box-lbl { background: var(--red); }
-.box.gray { border-color: #8592a6; background: rgba(133, 146, 166, .15); }
-.box.gray .box-lbl { background: #8592a6; }
+.box.sel { border-color: #fff; box-shadow: inset 0 0 0 1px #fff; }
 .pill.gray { background: var(--line); color: var(--sub); }
 table.batch .fc { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Non-digital emitter inline info */
-.survinfo {
-  background: var(--hover); border-radius: 14px; padding: 14px 16px; margin: 12px 0;
-  border-left: 4px solid #8592a6; animation: rise .3s ease both;
-}
-.survinfo h3 { margin: 0 0 10px; font-size: 14px; }
-.si-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 16px; }
-.si-k { font-size: 11px; color: var(--sub); }
-.si-v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 420px) {
   .form-row { grid-template-columns: 1fr; }

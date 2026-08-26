@@ -185,11 +185,9 @@ def test_robust_to_nonfinite_and_degenerate():
     xn = x.copy()
     xn[10], xn[20] = np.nan, np.inf
     assert analyze(xn, m).mod == "qpsk"
-    from signus.pipeline import survey
     for bad in (np.zeros(4000, complex), np.full(4000, np.nan, complex),
                 np.full(4000, np.inf, complex)):
         analyze(bad, m)                     # degenerate -> nonsense result, but NO crash
-    survey(np.zeros(20000, complex), m)     # and the survey path too
 
 
 @pytest.mark.parametrize("taps,ts", [((1.0, 0.5), 2.0), ((1.0, 0.5, 0.3), 1.0),

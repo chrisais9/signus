@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .pipeline import analyze, survey_web
+from .pipeline import analyze_web
 from .sigio import Meta, decode, parse_name
 
 _WEB = Path(__file__).resolve().parent / "web"  # inside the package so wheels/sdists ship it
@@ -42,7 +42,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         url = urlparse(self.path)
-        if url.path not in ("/api/analyze", "/api/survey"):
+        if url.path != "/api/analyze":
             self._json(404, {"error": "not found"})
             return
         q = parse_qs(url.query)
@@ -63,8 +63,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
             return
         try:
-            out = survey_web(x, meta) if url.path == "/api/survey" \
-                else analyze(x, meta, burst=burst).to_json()
+            out = analyze_web(x, meta, burst=burst)
             self._json(200, out)
         except Exception as exc:  # surface DSP failures to the UI
             self._json(500, {"error": f"분석 실패: {exc}"})

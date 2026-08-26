@@ -3,10 +3,9 @@
 블라인드 신호 복조기. PCM/IQ 파일을 넣으면 **제원(중심주파수·심볼레이트·변조방식·롤오프)을 자동 탐지**하고
 복조해 **시간순으로 재생되는 성상도**로 보여줍니다. 점이 뭉치면 성공.
 
-**광대역 캡처**(여러 신호가 주파수축에 나란히 뜬 수집 파일)는 `signus survey`가 **모든 신호를 탐지·분리**해
-하나씩 복조합니다 — 스펙트로그램에서 신호별 상자를 찾고(파워스펙트럼 기반), 각 채널을 기저대역으로 떼어내
-기존 복조 엔진에 넣습니다. 아날로그 FM 음성·순수톤처럼 복조 대상이 아닌 신호는 성상도에 억지로 맞추지 않고
-그대로 분류해 보고합니다.
+버스트열 캡처는 셀 기반 검출기가 **시간상 버스트들을 찾아** 버스트별로 분석하고(`--burst` 선택,
+웹은 버스트 지도 클릭), 처프/CSS(LoRa) 신호는 성상도에 억지로 맞추지 않고 **처프율·대역폭·LoRa
+추정(SF·심볼레이트)** 특성으로 판독해 보고합니다.
 
 의존성은 **numpy, scipy 단 둘** — 웹 UI는 파이썬 표준 라이브러리 서버로 동작하며 외부 리소스(CDN·폰트)
 요청이 전혀 없어 격리망에서 그대로 돌아갑니다.
@@ -19,8 +18,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e .                 # 'signus' 명령 등록
 
 signus dataset --out samples               # 변조×샘플타입×장애 30종 + 정답 사이드카
-signus analyze samples/16qam.cplx.1000000.16t.pcm  # 단일 신호
-signus survey capture.cplx.20000000.16t.pcm        # 광대역: 모든 신호 탐지+복조
+signus analyze samples/16qam.cplx.1000000.16t.pcm  # 블라인드 복조 + 제원 탐지
 signus sweep --tier core                   # 전수조사 (CORE 100% 필수, BER=0)
 signus serve                               # 웹 UI → http://127.0.0.1:8000
 ```
@@ -89,16 +87,6 @@ signus analyze FILE --report out.json
 
 ## 파이프라인
 
-**광대역 서베이 앞단** (`signus survey`) — 캡처에 신호가 여럿일 때:
-
-```
-스펙트로그램(Blackman-Harris) → 시간평균 PSD → 광폭 20퍼센타일 잡음바닥(신호 폭 무관)
-→ 문턱 → 형태학 정리 → 신호별 상자 {중심주파수·대역폭·시간} → 인접 병합
-└─ 각 신호: fc로 하향변환 → 저역통과 → 데시메이션(신호가 대역의 1/4~1/3 되도록)
-   → 분류 관문: 정포락선 CV로 디지털/아날로그 판별
-      ├─ 디지털 → 아래 단일신호 엔진에 투입
-      └─ 아날로그 FM · 순수톤 → 성상도 강제 없이 그대로 보고
-```
 
 단일 신호 엔진 (`signus analyze`, 서베이가 신호마다 호출):
 
@@ -148,10 +136,10 @@ signus/classify.py        변조 분류 · 정렬 · 품질 · M2M4 SNR
 signus/fsk.py             정포락선 게이트 · 주파수 판별 복조
 signus/eq.py              CMA → 결정지향 블라인드 등화기 (심볼간격 + T/2 분수간격)
 signus/spectrum.py        스펙트럼 · 워터폴 (표시 전용)
-signus/pipeline.py        단일 신호 파이프라인 + 광대역 서베이 오케스트레이션
+signus/pipeline.py        블라인드 복조 종단 조립 (analyze + 웹 페이로드)
 signus/gen.py             독립 신호 생성기 (수신기와 코드 미공유) — 개발기 전용, 인쇄물 제외
 signus/lab.py             gen/dataset/sweep 명령 + BER 채점 하네스 — 개발기 전용, 인쇄물 제외
-signus/cli.py             analyze/survey/serve (+ lab 이 있으면 gen/dataset/sweep 을 단다)
+signus/cli.py             analyze/serve (+ lab 이 있으면 gen/dataset/sweep 을 단다)
 signus/server.py          stdlib 웹서버
 signus/web/               vanilla 프런트 (애니메이션 성상도 · 워터폴 · 배치, CDN 없음)
 ```

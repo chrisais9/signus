@@ -94,33 +94,6 @@ def test_cli_analyze_with_overrides(tmp_path, capsys):
     assert main(["analyze", str(f), "--fs", "1e6", "--fmt", "iq", "--dtype", "f32"]) == 0
     assert "qpsk" in capsys.readouterr().out
 
-
-def test_cli_survey_wideband_file(tmp_path, capsys):
-    """A capture file with two emitters at different carriers: survey finds both."""
-    from signus.sigio import Meta, write
-    fs, n = 1e6, 240000
-    rng = np.random.default_rng(0)
-
-    def emit(mod, baud, fc, seed):
-        x, _ = generate(GenParams(mod=mod, n_symbols=8000, fs=fs, baud=baud, fc=fc,
-                                  snr=60.0, seed=seed))
-        x = x[:n] if x.size >= n else np.concatenate([x, np.zeros(n - x.size, complex)])
-        return x / np.sqrt(np.mean(np.abs(x) ** 2))
-
-    mix = emit("qpsk", 25e3, -250e3, 1) + emit("16qam", 50e3, 150e3, 2)
-    mix = mix + np.sqrt(0.05 / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
-    f = tmp_path / "wb.cplx.1000000.16t.pcm"
-    write(str(f), mix, Meta(fs, "iq", "i16"))
-    rep = str(tmp_path / "s.json")
-    assert main(["survey", str(f), "--report", rep]) == 0
-    printed = capsys.readouterr().out
-    assert "방사체 2개" in printed and "qpsk" in printed and "16qam" in printed
-    doc = json.loads((tmp_path / "s.json").read_text())
-    assert doc["n_emitters"] == 2
-    mods = {e.get("mod") for e in doc["emitters"]}
-    assert {"qpsk", "16qam"} <= mods
-
-
 @pytest.fixture
 def server():
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -148,6 +121,13 @@ def test_server_analyze_and_static(server):
         server + "/api/analyze?name=cap.real.1000000.16t.pcm", data=raw16, method="POST")
     with urllib.request.urlopen(req, timeout=60) as res:
         assert json.load(res)["detected"]["mod"] == "bpsk"
+    gone = urllib.request.Request(server + "/api/survey?name=cap.cplx.1000000.32f.pcm",
+                                  data=b"\x00" * 64, method="POST")   # 제거된 엔드포인트는 404
+    try:
+        urllib.request.urlopen(gone, timeout=10)
+        raise AssertionError("/api/survey 가 아직 살아 있다")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
     bad = urllib.request.Request(server + "/api/analyze?name=nometa.bin",
                                  data=b"\x00" * 4096, method="POST")
     with pytest.raises(urllib.error.HTTPError) as ei:

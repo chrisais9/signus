@@ -131,7 +131,7 @@ def analyze_fsk(x: np.ndarray, fs: float) -> dict:
     # heavy oversampling (fs/baud >> 10) buries the symbol-rate line under broadband transition
     # artifacts -> _est_baud locks a spurious peak (baud ~25% off) while the clean tones still
     # cluster (lock ~94): a confident WRONG decode. Re-estimate baud on a decimated copy (tones ->
-    # ~_DECIM_FRAC of Nyquist, as the survey channelizer does). Gated at _DECIM_MIN so the sps~10
+    # ~_DECIM_FRAC of Nyquist). Gated at _DECIM_MIN so the sps~10
     # grid is untouched (fsk2/fsk4/msk baud=fs/10 -> d<3 -> no re-estimate -> sweep byte-identical).
     bw = _bw99(x, fs)
     d = int(_DECIM_FRAC * fs / bw) if bw > 0 else 1

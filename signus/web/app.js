@@ -1,12 +1,11 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const API = "/api/analyze";
-const SURVEY_API = "/api/survey";
 const FS_RE = /(?:^|[._])fs(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:[._]|$)/i;
 const RF_RE = /(?:^|[._])rf(\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:[._]|$)/i;
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const state = { file: null, sidecar: null, meta: null, resp: null, batch: [],
-                burst: null, survey: null, drilled: false, overview: null };
+                burst: null, overview: null };
 
 /* --- filename parsing (mirror of sigio.parse_name; read-necessities only) --- */
 const DTYPES = ["i8", "u8", "i16", "u16", "f32", "f64"];
@@ -101,8 +100,6 @@ async function acceptFiles(list) {
   state.resp = null;
   state.batch = [];
   state.burst = null;
-  state.survey = null;
-  state.drilled = false;
   state.overview = null;
   // 사이드카는 이름이 같은 캡처의 것만 쓴다 -- 확장자만 보고 집으면 다른 신호의 fs/fmt 로
   // 조용히 읽는다 (일괄 모드는 이미 stem 대조를 한다: 두 모드가 다르면 그게 또 함정이다)
@@ -115,7 +112,7 @@ async function acceptFiles(list) {
   const truth = metas.find((m) => m.name.toLowerCase().endsWith(".json") && mine(m, ".json"));
   state.sidecar = truth ? await readJson(truth) : null;   // client-side only, never sent
   state.meta = (sm && metaFromSigmf(await readJson(sm))) || parseName(state.file.name);
-  if (state.meta && state.meta.fs && state.meta.fmt) runSurvey();
+  if (state.meta && state.meta.fs && state.meta.fmt) runFirst();
   else showMetaForm();
 }
 const readJson = (f) => f.text().then(JSON.parse).catch(() => null);
@@ -132,7 +129,7 @@ $("metaGo").onclick = () => {
   const fs = parseFloat($("mFs").value), fmt = $("mFmt").value;
   if (!(fs > 0) || !fmt) return showError("샘플레이트와 포맷을 입력해주세요.");
   state.meta = { fs, fmt, dtype: $("mDtype").value, endian: "le", bitrev: false };
-  runSurvey();
+  runFirst();
 };
 
 /* --- server call (contract-frozen) --- */
@@ -153,18 +150,16 @@ async function postTo(api, file, m, burst) {
   if (!res.ok || data.error) throw new Error(data.error || `서버 오류 (${res.status})`);
   return data;
 }
-async function runSurvey() {                  // entry: one capture -> single detail OR survey
+async function runFirst() {                   // entry: first analyze of a fresh capture
   hideAll();
-  state.drilled = false;
-  $("loadMsg").textContent = "신호를 조사하고 있어요…";
+  $("loadMsg").textContent = "신호를 분석하고 있어요…";
   show($("loading"));
   try {
-    const resp = await postTo(SURVEY_API, state.file, state.meta);
-    if (resp.mode === "single") {
-      state.survey = null; state.overview = resp.overview || null; state.resp = resp.result;
-      render(resp.result);
-      if (state.overview) renderBurstMap(state.overview, resp.result);
-    } else renderSurvey(resp);
+    const resp = await postTo(API, state.file, state.meta);
+    state.overview = resp.overview || null;
+    state.resp = resp;
+    render(resp);
+    if (state.overview) renderBurstMap(state.overview, resp);
   } catch (e) {
     showError(e.message);
   }
@@ -230,7 +225,7 @@ function renderBatch(rows) {
       const r = state.batch[+tr.dataset.i];
       if (!r.resp) return;
       state.file = r.file; state.meta = r.meta; state.resp = r.resp; state.sidecar = r.sidecar;
-      state.burst = null; state.drilled = false; state.survey = null; state.overview = null;
+      state.burst = null; state.overview = null;
       hideAll();
       render(r.resp);
       const b = $("backBatch");
@@ -252,132 +247,22 @@ $("dlCsv").onclick = () => {
   saveBlob("signus_batch.csv", head + body, "text/csv");
 };
 
-/* --- wideband survey overview (waterfall + detected-emitter boxes) --- */
-function renderSurvey(resp) {
-  hideAll();
-  stopPlay();
-  state.survey = resp;
-  const dig = resp.emitters.filter((e) => e.result).length;
-  $("survCount").textContent = `${resp.emitters.length}개 신호 · 디지털 ${dig}`;
-  $("survInfo").classList.add("hidden");
-  renderSurveyList(resp);
-  show($("surveyCard"));                // show first so the canvas has a real width
-  paintWaterfall($("survFall"), resp.overview.waterfall, 230);
-  drawBoxes(resp);
-}
-
-function boxStyle(e) {   // -> [css class, short label]
-  if (e.result) {
-    const lock = Math.round(e.result.quality.lock);
-    return [lock >= 60 ? "ok" : lock >= 40 ? "warn" : "bad",
-            `${e.result.detected.mod.toUpperCase()} · ${lock}`];
-  }
-  if (e.kind === "chirp") {
-    return ["gray", e.info && e.info.sf ? `LoRa SF${e.info.sf}` : "처프"];
-  }
-  return ["gray", { analog: "아날로그", tone: "톤/CW", tooshort: "짧음",
-                    error: "오류" }[e.kind] || e.kind];
-}
-
-function drawBoxes(resp) {
-  const host = $("survBoxes"), fs = resp.overview.fs, n = resp.overview.n || 1;
-  host.innerHTML = "";
-  resp.emitters.forEach((e) => {
-    const d = e.det, [cls, lbl] = boxStyle(e);
-    const wpct = Math.max(0.8, d.bw / fs * 100);          // width  = bandwidth / fs
-    const left = (d.fc + fs / 2) / fs * 100 - wpct / 2;   // x      = carrier on -fs/2..fs/2
-    const top = Math.max(0, d.t0 / n * 100);              // y      = burst start over capture
-    const b = document.createElement("button");
-    b.className = "box " + cls;
-    b.style.left = Math.max(0, Math.min(100 - wpct, left)) + "%";
-    b.style.width = wpct + "%";
-    b.style.top = top + "%";
-    b.style.height = Math.min(100 - top, Math.max(7, (d.t1 - d.t0) / n * 100)) + "%";
-    b.title = lbl;
-    b.innerHTML = `<span class="box-lbl">${lbl}</span>`;
-    b.onclick = () => drillEmitter(e);
-    host.appendChild(b);
-  });
-}
-
-function renderSurveyList(resp) {
-  const KIND = { linear: "디지털", fsk: "FSK", chirp: "처프/LoRa", analog: "아날로그",
-                 tone: "톤/CW", tooshort: "짧음", error: "오류" };
-  const rf0 = resp.rf_center;                      // real RF = capture centre + abs_fc
-  $("survBody").innerHTML = resp.emitters.map((e, i) => {
-    const [cls] = boxStyle(e), r = e.result;
-    const lock = r ? `<span class="pill ${cls}">${Math.round(r.quality.lock)}</span>`
-                   : `<span class="pill gray">–</span>`;
-    return `<tr data-i="${i}"><td class="fc">${rf0 != null ? fmtRf(rf0 + e.abs_fc) : fmtHz(e.abs_fc)}</td>` +
-      `<td>${KIND[e.kind] || e.kind}</td><td>${r ? r.detected.mod.toUpperCase() : "–"}</td>` +
-      `<td>${r ? fmtHz(r.detected.baud) : "–"}</td><td>${lock}</td></tr>`;
-  }).join("");
-  $("survBody").querySelectorAll("tr").forEach((tr) => {
-    tr.onclick = () => drillEmitter(resp.emitters[+tr.dataset.i]);
-  });
-}
-
-function drillEmitter(e) {
-  if (e.result) {                       // digital -> reuse the single-signal detail view
-    state.drilled = true;
-    state.overview = null;              // a cut channel has no whole-capture burst map
-    state.resp = e.result;
-    render(e.result);
-    const rf0 = state.survey && state.survey.rf_center;
-    $("fileName").textContent =
-      `에미터 @ ${rf0 != null ? fmtRf(rf0 + e.abs_fc) : fmtHz(e.abs_fc)} · ${state.file.name}`;
-    const b = $("backBatch");
-    b.textContent = "← Survey로";
-    b.onclick = backToSurvey;
-    b.classList.remove("hidden");
-  } else {                              // non-digital -> inline info, stay on the overview
-    showSurveyInfo(e);
-  }
-}
-function backToSurvey() { state.drilled = false; renderSurvey(state.survey); }
-
-function showSurveyInfo(e) {
-  const d = e.det;
-  let title, rows;
-  if (e.kind === "chirp" && e.info) {          // linear chirp / CSS (LoRa): characterized only
-    const c = e.info;
-    title = (c.sf ? `LoRa 계열 (SF${c.sf})` : "선형 처프 / CSS") + " — 복조 대상 아님";
-    // rate + direction are robust (coherent from the beat tone); bw/SF only when the
-    // channel is cleanly isolated enough to snap to a LoRa hypothesis.
-    rows = [["중심주파수", fmtHz(e.abs_fc)],
-            ["처프 방향", c.up ? "▲ 상승" : "▼ 하강"],
-            ["처프율", (c.mu / 1e9).toFixed(3) + " MHz/ms"]];
-    if (c.sf) rows.push(["대역폭", fmtHz(c.bw)], ["심볼레이트", fmtHz(c.rs)],
-                        ["심볼시간", (c.tsym * 1e3).toFixed(2) + " ms"]);
-  } else {
-    const KIND = { analog: "아날로그 (FM/음성)", tone: "톤 / CW",
-      tooshort: "너무 짧은 버스트", error: "분석 오류" };
-    title = (KIND[e.kind] || e.kind) + " — 복조 대상 아님";
-    rows = [["중심주파수", fmtHz(e.abs_fc)], ["대역폭", fmtHz(d.bw)],
-      ["SNR", d.snr_db == null ? "–" : d.snr_db.toFixed(1) + " dB"],
-      ["심볼레이트(추정)", fmtHz(d.baud_hint)]];
-  }
-  $("survInfo").innerHTML = `<h3>${title}</h3>` +
-    '<div class="si-grid">' + rows.map(([k, v]) =>
-      `<div><div class="si-k">${k}</div><div class="si-v">${v}</div></div>`).join("") + "</div>";
-  $("survInfo").classList.remove("hidden");
-  $("survInfo").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "nearest" });
-}
-
-/* --- burst map: whole-record waterfall with clickable time-burst boxes (single signal) --- */
+/* --- burst map: whole-record waterfall with clickable time-burst boxes --- */
 function renderBurstMap(ov, result) {
   show($("burstMap"));
-  paintWaterfall($("burstFall"), ov.waterfall, 150);
-  const host = $("burstBoxes"), n = ov.n || 1;
+  const n = ov.n || 1, bs = result.bursts || [];
+  paintWaterfall($("burstFall"), ov.waterfall, 150,
+                 bs.map((b, i) => [b.start / n, b.end / n, String(i + 1)]));
+  const host = $("burstBoxes");
   host.innerHTML = "";
-  (result.bursts || []).forEach((b, i) => {
-    const top = Math.max(0, b.start / n * 100);
+  bs.forEach((b, i) => {
+    const left = Math.max(0, b.start / n * 100);
     const dur = (b.end - b.start) / ov.fs;
     const lbl = `버스트 ${i + 1} · ${dur >= 1 ? dur.toFixed(2) + " s" : (dur * 1e3).toFixed(0) + " ms"}`;
-    const box = document.createElement("button");   // full width (one signal), spans t0..t1 in time
+    const box = document.createElement("button");   // full height (one signal), spans t0..t1 in time
     box.className = "box" + (i === result.burst_idx ? " sel" : "");
-    box.style.left = "0%"; box.style.width = "100%"; box.style.top = top + "%";
-    box.style.height = Math.min(100 - top, Math.max(5, (b.end - b.start) / n * 100)) + "%";
+    box.style.top = "0%"; box.style.height = "100%"; box.style.left = left + "%";
+    box.style.width = Math.min(100 - left, Math.max(0.8, (b.end - b.start) / n * 100)) + "%";
     box.title = lbl;
     box.innerHTML = `<span class="box-lbl">${lbl}</span>`;
     box.onclick = () => { state.burst = i; analyze(); };   // re-analyse that burst; map persists
@@ -395,7 +280,9 @@ function render(d) {
   hideAll();
   show($("results"));
   $("burstMap").classList.add("hidden");   // re-shown by renderBurstMap only in multi-burst single mode
-  const lock = d.quality.lock, [txt, cls] = statusOf(lock);
+  const lock = d.quality.lock;
+  let [txt, cls] = statusOf(lock);
+  if (d.detected.chirp) { txt = "처프 특성 보고"; cls = "warn"; }
   const pill = $("statusPill");
   pill.textContent = txt;
   pill.className = "pill " + cls;
@@ -407,6 +294,7 @@ function render(d) {
 
   const flags = [];
   if (d.family === "fsk") flags.push('<span class="chip warn">FSK 계열 · 주파수 판별</span>');
+  if (d.family === "chirp") flags.push('<span class="chip warn">처프/CSS · 특성 판독</span>');
   if (d.eq && d.eq.applied) flags.push(`<span class="chip hit">등화기 적용 · ${
     d.eq.mode === "fse" ? "T/2 분수간격" : "심볼간격"}</span>`);
   if (d.detected.alias_resolved) flags.push('<span class="chip warn">반송파 앨리어스 보정</span>');
@@ -429,10 +317,8 @@ function snrText(d) {
 
 function renderBursts(d) {
   const row = $("burstRow"), bs = d.bursts || [];
-  // a survey-drilled emitter is already a cut channel: burst re-selection would
-  // re-post the whole capture, so it is disabled while drilled. When the burst MAP
-  // is shown (multi-burst single signal) the map replaces the chips.
-  if (state.drilled || state.overview || bs.length < 2) { row.innerHTML = ""; return; }
+  // when the burst MAP is shown (multi-burst capture) the map replaces the chips
+  if (state.overview || bs.length < 2) { row.innerHTML = ""; return; }
   const dur = (b) => {
     const sec = (b.end - b.start) / d.fs;
     return sec >= 1 ? sec.toFixed(2) + " s" : (sec * 1e3).toFixed(1) + " ms";
@@ -451,6 +337,19 @@ function chip(hit, truthTxt) {
 function renderParams(d) {
   const det = d.detected, t = state.sidecar && state.sidecar.truth;
   const near = (a, b, tol) => Math.abs(a - b) <= tol;
+  if (det.chirp) {              // 처프/CSS: 성상도 제원 대신 특성 (복조 없음, 판독만)
+    const c = det.chirp;
+    const crows = [
+      ["중심주파수", det.rf_hz != null ? fmtRf(det.rf_hz) : fmtHz(det.fc), null,
+        det.rf_hz != null ? `기저대역 ${fmtHz(det.fc)}` : ""],
+      ["처프", `${c.up ? "▲ 상승" : "▼ 하강"} · ${(c.mu / 1e9).toFixed(3)} MHz/ms`, null,
+        `점유대역폭 ${fmtHz(c.bw)}`],
+      ["변조방식", c.sf ? `LoRa 추정 SF${c.sf}` : "처프(FMCW/CSS)", null,
+        c.sf ? `심볼레이트 ${fmtHz(c.rs)} · 심볼시간 ${(c.tsym * 1e3).toFixed(2)} ms` : ""],
+    ];
+    $("paramGrid").innerHTML = crows.map(paramCard).join("");
+    return;
+  }
   const rows = [
     ["중심주파수", det.rf_hz != null ? fmtRf(det.rf_hz) : fmtHz(det.fc),
       t && t.fc != null && chip(near(det.fc, t.fc, Math.max(300, 0.02 * t.baud)), fmtHz(t.fc)),
@@ -467,13 +366,17 @@ function renderParams(d) {
     rows.push(["롤오프", det.rolloff.toFixed(2),
       t && t.rolloff != null && chip(near(det.rolloff, t.rolloff, 0.11), t.rolloff.toFixed(2)), ""]);
   }
-  $("paramGrid").innerHTML = rows.map(([label, val, hit, note]) => `
+  $("paramGrid").innerHTML = rows.map(paramCard).join("");
+}
+
+function paramCard([label, val, hit, note]) {
+  return `
     <div class="card param">
       <div class="param-label">${label}</div>
       <div class="param-val">${val}</div>
       ${note ? `<div class="param-note">${note}</div>` : ""}
       ${hit ? `<div class="chips">${hit}</div>` : ""}
-    </div>`).join("");
+    </div>`;
 }
 
 function animateGauge(lock, cls) {
@@ -509,26 +412,33 @@ function pct(a, p) {
 
 /* --- spectrum --- */
 function drawSpectrum(d) {
+  // sa 프로브의 power spectrum 판과 같은 조판: 흑배경, 백색 곡선, 회색(0.35) 점선 격자,
+  // 바닥 p5-2 .. 최대+2 dB. 검출된 중심주파수(실선)와 ±baud/2(점선)만 기능선으로 얹는다.
   const [g, w, h] = fit($("specCanvas"), 120);
-  g.fillStyle = "#0d1320"; g.fillRect(0, 0, w, h);
+  g.fillStyle = "#000"; g.fillRect(0, 0, w, h);
   if (!d.spectrum) return;
   const f = d.spectrum.f, db = d.spectrum.db;
-  const lo = pct(db, 0.02), hi = pct(db, 1) + 2;
+  const lo = pct(db, 0.05) - 2, hi = pct(db, 1) + 2;
   const fmin = f[0], fmax = f[f.length - 1];
   const X = (v) => (v - fmin) / (fmax - fmin) * w;
   const Y = (v) => h - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo) * (h - 8) - 4;
+  g.strokeStyle = "rgba(255,255,255,.35)"; g.setLineDash([1, 5]);
+  for (let k = 1; k <= 4; k++) {                 // fs/2 의 k/5 지점 세로 격자 (sa 와 동일)
+    const gx = fmin + (fmax - fmin) * k / 5;
+    g.beginPath(); g.moveTo(X(gx), 0); g.lineTo(X(gx), h); g.stroke();
+  }
   const det = d.detected, half = det.baud / 2e3;
-  g.strokeStyle = "rgba(120,180,255,.35)"; g.setLineDash([4, 4]);
+  g.setLineDash([4, 4]);
   for (const gf of [det.fc / 1e3 - half, det.fc / 1e3 + half]) {
     g.beginPath(); g.moveTo(X(gf), 0); g.lineTo(X(gf), h); g.stroke();
   }
   g.setLineDash([]);
-  g.strokeStyle = "rgba(255,255,255,.45)";
+  g.strokeStyle = "rgba(255,255,255,.6)";
   g.beginPath(); g.moveTo(X(det.fc / 1e3), 0); g.lineTo(X(det.fc / 1e3), h); g.stroke();
-  g.strokeStyle = "#5aa9ff"; g.lineWidth = 1.4; g.beginPath();
+  g.strokeStyle = "#ebebeb"; g.lineWidth = 1.2; g.beginPath();
   f.forEach((v, k) => (k ? g.lineTo(X(v), Y(db[k])) : g.moveTo(X(v), Y(db[k]))));
   g.stroke();
-  g.fillStyle = "rgba(255,255,255,.5)"; g.font = "10px sans-serif";
+  g.fillStyle = "rgba(255,255,255,.6)"; g.font = "10px sans-serif";
   g.fillText(sig(fmin) + " kHz", 4, h - 4);
   const tmax = sig(fmax) + " kHz";
   g.fillText(tmax, w - g.measureText(tmax).width - 4, h - 4);
@@ -536,21 +446,33 @@ function drawSpectrum(d) {
 
 /* --- waterfall --- */
 function drawWaterfall(d) { paintWaterfall($("fallCanvas"), d.waterfall, 150); }
-function paintWaterfall(canvas, wf, hCss) {
+function paintWaterfall(canvas, wf, hCss, marks) {
+  // sa 프로브의 PNG 와 같은 조판: 흑백(최대 235), 바닥 p25 + 대비폭 10..35dB 클램프,
+  // 가로=시간, 위=+주파수, 보간 없는 픽셀. marks 가 오면 위 번호 레인 + 아래 검출 띠.
   const [g, w, h] = fit(canvas, hCss);
-  g.fillStyle = "#0d1320"; g.fillRect(0, 0, w, h);
+  g.fillStyle = "#000"; g.fillRect(0, 0, w, h);
   if (!wf || !wf.rows) return;
-  const lo = pct(wf.db, 0.05), hi = pct(wf.db, 0.95);
-  const img = g.createImageData(wf.bins, wf.rows);
-  for (let k = 0; k < wf.db.length; k++) {
-    const t = Math.max(0, Math.min(1, (wf.db[k] - lo) / (hi - lo + 1e-9)));
-    const o = k * 4;                             // dark -> blue -> white ramp
-    img.data[o] = t < 0.5 ? 13 + t * 120 : 73 + (t - 0.5) * 364;
-    img.data[o + 1] = t < 0.5 ? 19 + t * 260 : 149 + (t - 0.5) * 212;
-    img.data[o + 2] = t < 0.5 ? 32 + t * 446 : 255;
-    img.data[o + 3] = 255;
+  const lo = pct(wf.db, 0.25);
+  const rg = Math.max(10, Math.min(35, pct(wf.db, 0.995) - lo));
+  const img = g.createImageData(wf.rows, wf.bins);          // x=시간(row), y=주파수(bin)
+  for (let r = 0; r < wf.rows; r++) {
+    for (let b = 0; b < wf.bins; b++) {
+      const t = Math.max(0, Math.min(1, (wf.db[r * wf.bins + b] - lo) / rg));
+      const o = ((wf.bins - 1 - b) * wf.rows + r) * 4;      // +fs/2 가 위
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = Math.round(t * 235);
+      img.data[o + 3] = 255;
+    }
   }
-  createImageBitmap(img).then((bmp) => { g.imageSmoothingEnabled = true; g.drawImage(bmp, 0, 0, w, h); });
+  createImageBitmap(img).then((bmp) => {
+    g.imageSmoothingEnabled = false;
+    g.drawImage(bmp, 0, 0, w, h);
+    if (!marks) return;
+    g.fillStyle = "#ebebeb"; g.font = "bold 11px ui-monospace, monospace";
+    marks.forEach(([a, b, num]) => {
+      g.fillRect(a * w, h - 6, Math.max(2, (b - a) * w), 4);         // 검출 띠
+      g.fillText(num, ((a + b) / 2) * w - g.measureText(num).width / 2, 12);  // 번호 레인
+    });
+  });
 }
 
 /* --- constellation playback (the headline) --- */
@@ -683,7 +605,7 @@ $("dlReport").onclick = () =>
 function show(el) { el.classList.remove("hidden"); }
 function hideAll() {
   stopPlay();
-  ["metaForm", "loading", "errorCard", "results", "batchCard", "surveyCard"]
+  ["metaForm", "loading", "errorCard", "results", "batchCard"]
     .forEach((id) => $(id).classList.add("hidden"));
   $("backBatch").classList.add("hidden");
 }

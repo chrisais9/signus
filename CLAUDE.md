@@ -20,7 +20,7 @@ plt 로 띄워도 되고, 픽셀 정밀 대조(KAT 기대 그림 비교)가 필�
 읽으면 신호가 균등분포 잡음으로 보인다 — `sigc` 회신이 `cp≈20‰ kb0 ps≈15 ev≈0` 이면 그 서명이다.
 
 **실신호 장비에는 `tools/` 가 없다.** 필사 대상은 `tools/codebook.py` 의 SECTIONS 뿐이고
-(pyproject + `signus/*` 중 21개), 거기에 `tools/` 는 0건이다. 그러니 **그 장비가 써야 하는
+(pyproject + `signus/*` 중 18개 + `probes/*` 2개), 거기에 `tools/` 는 0건이다. 그러니 **그 장비가 써야 하는
 기능은 반드시 `signus/` 안에 넣는다** — `tools/` 에 두면 그 도구부터 필사해야 한다.
 단 `signus/` 라고 다 싣는 것은 아니다: 합성 생성기·채점(`signus/gen.py`, `signus/lab.py`)은
 개발기 전용이라 **일부러 뺐다** (아래 인쇄물 절). 같은 이유로 그 장비에서는 pip 설치도,

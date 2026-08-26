@@ -54,7 +54,7 @@ _SWEEP_OCC_MIN = 0.6   # ...and fills its band; FSK sits on 2-4 discrete tones (
 def sweeps_band(x: np.ndarray, fs: float, bins: int = 40) -> bool:
     """True when the instantaneous frequency SWEEPS the channel (linear chirp / CSS) rather
     than hopping between a few discrete FSK tones. A linear FMCW ramp reads bimodal to
-    fsk_gate AND trips is_chirp's beat test, so triage needs this to tell a genuine band-sweep
+    fsk_gate AND trips is_chirp's beat test, so analyze's chirp gate needs this to tell a sweep
     from FSK: a sweep's IF histogram is flat and fully occupied; FSK's spikes at its tones.
     Calibrated on extracted channels: 0/222 FSK/MSK (snr 8-40) pass, 214/216 FMCW + 60/60 LoRa
     pass (misses only the narrowest, gentlest ramps -- which stay 'fsk', never a regression).

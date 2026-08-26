@@ -63,11 +63,8 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("signus/sigio.py", "샘플 파일 I/O — 파일명이 fs·iq/real·샘플타입을 실어 나른다"),
         ("signus/constellations.py", "성상도 · 그레이 비트 매핑 · FSK 레벨 (공용 기준표)"),
     ]),
-    ("2 · 광대역 탐지와 채널 추출", [
+    ("2 · 스펙트럼 뷰", [
         ("signus/spectrum.py", "스펙트럼 · 워터폴 뷰 (표시 전용, 탐지엔 미사용)"),
-        ("signus/detect.py", "광대역 탐지 — 캡처 안의 모든 방사체를 주파수/시간 상자로"),
-        ("signus/channelize.py", "채널 추출 — 광대역에서 방사체 하나만 기저대역으로 끌어냄"),
-        ("signus/triage.py", "채널 트리아지 — 복조 가능한 디지털 신호인지 판별"),
     ]),
     ("3 · 수신 DSP 코어", [
         ("signus/dsp.py", "수신 DSP 단계 (벡터화) — 이 프로젝트의 심장"),
@@ -84,7 +81,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("signus/pipeline.py", "블라인드 복조 종단 조립 — 두 계열의 진입점"),
     ]),
     ("6 · 사용자 인터페이스", [
-        ("signus/cli.py", "CLI — analyze / survey / serve (합성·채점 명령은 개발기 전용)"),
+        ("signus/cli.py", "CLI — analyze / serve (합성·채점 명령은 개발기 전용)"),
         ("signus/server.py", "표준 라이브러리만 쓰는 웹 서버 + POST /api/analyze"),
     ]),
     ("7 · 웹 프론트엔드", [
