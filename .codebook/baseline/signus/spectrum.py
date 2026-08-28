@@ -9,10 +9,11 @@ def _db(p: np.ndarray) -> np.ndarray:
 
 
 def spectrum(x: np.ndarray, fs: float, bins: int = 256) -> dict:
-    """Averaged PSD of the burst, decimated to `bins` points. Frequencies in kHz."""
-    nper = int(min(4096, max(64, x.size // 8)))
-    f, p = welch(x, fs=fs, nperseg=nper, return_onesided=False, detrend=False)
-    f, p = np.fft.fftshift(f), _db(np.fft.fftshift(p))
+    """sa 프로브의 PSD 판과 같은 조판: 실수부 welch(nperseg<=2048), 단측 0..fs/2 (kHz).
+    표시 칸으로 줄일 때는 최대 풀링 -- 좁은 바늘이 살아남게."""
+    xd = x.real if np.iscomplexobj(x) else x
+    f, p = welch(xd, fs=fs, nperseg=int(min(2048, max(64, xd.size))))
+    p = _db(p)
     if f.size > bins:  # max-pool so narrow tones survive decimation
         k = f.size // bins
         f, p = f[: k * bins].reshape(bins, k).mean(1), p[: k * bins].reshape(bins, k).max(1)

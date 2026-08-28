@@ -1,12 +1,12 @@
 {
- "date": "2026-08-28",
- "head": "44ee8e0+수정중",
+ "date": "2026-08-29",
+ "head": "578d95c+수정중",
  "files": {
   "pyproject.toml": "3565bf49dd97",
   "signus/__init__.py": "29c12d294e8a",
   "signus/sigio.py": "f4465af9100a",
   "signus/constellations.py": "b35bfa4b0cfa",
-  "signus/spectrum.py": "bc5a7b1913ff",
+  "signus/spectrum.py": "a90886127c39",
   "signus/dsp.py": "2ade6b9641fb",
   "signus/eq.py": "895ecc7f93fa",
   "signus/sync.py": "c7afb999f39b",
@@ -19,7 +19,7 @@
   "signus/server.py": "2b66df3e5ad5",
   "signus/web/index.html": "794217a5dab8",
   "signus/web/style.css": "06a23b226a60",
-  "signus/web/app.js": "667eabc3c83d",
+  "signus/web/app.js": "3ce2cc891e9e",
   "probes/sigc.py": "60a494fb9bba",
   "probes/sa.py": "7944ee044816"
  }
