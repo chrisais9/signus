@@ -1,7 +1,7 @@
-"""Spectrum + waterfall views of the burst (display only, never used for detection)."""
+"""Spectrum + spectrogram-strip views (display only, never used for detection)."""
 
 import numpy as np
-from scipy.signal import welch
+from scipy.signal import stft, welch
 
 
 def _db(p: np.ndarray) -> np.ndarray:
@@ -19,18 +19,19 @@ def spectrum(x: np.ndarray, fs: float, bins: int = 256) -> dict:
     return {"f": np.round(f / 1e3, 3).tolist(), "db": np.round(p, 2).tolist()}
 
 
-def waterfall(x: np.ndarray, fs: float, rows: int = 72, bins: int = 144) -> dict:
-    """Time-frequency magnitude (dB), row-major, robustly scaled by the caller."""
-    nfft = 1 << int(np.ceil(np.log2(max(bins * 2, 64))))
-    step = max(1, (x.size - nfft) // max(rows - 1, 1))
-    idx = np.arange(rows) * step
-    idx = idx[idx + nfft <= x.size]
-    if idx.size == 0:
-        return {"rows": 0, "bins": bins, "db": [], "dt": 0.0}
-    win = np.hanning(nfft)
-    seg = np.stack([x[i:i + nfft] * win for i in idx])
-    s = np.abs(np.fft.fftshift(np.fft.fft(seg, axis=1), axes=1)) ** 2
-    k = nfft // bins
-    s = s[:, : k * bins].reshape(idx.size, bins, k).mean(2)
-    return {"rows": int(idx.size), "bins": bins, "dt": float(step / fs),
-            "db": np.round(_db(s).ravel(), 2).tolist()}
+def strip(x: np.ndarray, fs: float, max_cols: int = 1600) -> dict:
+    """sa 프로브의 PNG 스펙트로그램 띠와 같은 조판의 회색조 이미지 (0..235, row-major,
+    위 행 = +fs/2 쪽). hamming 256/128 STFT, 바닥 p25 + 대비폭 10..35 dB 클램프, 열은
+    최대 풀링으로만 줄인다 -- 보간이 짧은 버스트를 뭉개지 않게."""
+    xd = x.real if np.iscomplexobj(x) else x
+    nper = int(min(256, max(64, 1 << int(np.log2(max(xd.size // 2, 64))))))
+    _, _, z = stft(xd, fs=fs, window="hamming", nperseg=nper, noverlap=nper // 2,
+                   return_onesided=True, boundary=None, padded=False)
+    db = 10 * np.log10(np.abs(z) ** 2 + 1e-12)
+    lo = float(np.percentile(db, 25))
+    rg = float(max(10.0, min(35.0, np.percentile(db, 99.5) - lo)))
+    g = np.clip((db - lo) / rg, 0, 1)[::-1]
+    kp = max(1, g.shape[1] // max_cols)
+    g = g[:, : g.shape[1] // kp * kp].reshape(g.shape[0], -1, kp).max(2)
+    return {"rows": int(g.shape[0]), "cols": int(g.shape[1]),
+            "g": np.round(g * 235).astype(int).ravel().tolist()}

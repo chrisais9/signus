@@ -143,7 +143,7 @@ def test_analyze_web_overview_only_on_first_multi_burst_load():
     x = x + (rng.standard_normal(x.size) + 1j * rng.standard_normal(x.size)) / np.sqrt(2)
     doc = analyze_web(x, M)
     assert len(doc["bursts"]) == 3
-    assert "overview" in doc and doc["overview"]["waterfall"]
+    assert "overview" in doc and doc["overview"]["strip"]["g"]
     assert doc["overview"]["n"] == x.size and doc["overview"]["fs"] == FS
     assert "overview" not in analyze_web(x, M, burst=0)       # 재선택은 지도 재전송 없음
     xs, _ = generate(GenParams(mod="qpsk", n_symbols=4000, fs=FS, baud=1e5, snr=20, seed=2))

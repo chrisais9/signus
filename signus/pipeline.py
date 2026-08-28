@@ -19,7 +19,7 @@ from .constellations import demap_bits, demap_diff_bits, mod_order
 from .eq import equalize, equalize_fse
 from .fsk import analyze_fsk, fsk_gate
 from .sigio import Meta, parse_name, read
-from .spectrum import spectrum, waterfall
+from .spectrum import spectrum, strip
 from .sync import find_preamble
 
 _BITS_CAP = 65536
@@ -123,7 +123,7 @@ class Result:
         }
         if views and self.burst_x is not None:
             doc["spectrum"] = spectrum(self.burst_x, self.meta.fs)
-            doc["waterfall"] = waterfall(self.burst_x, self.meta.fs)
+            doc["strip"] = strip(self.burst_x, self.meta.fs)
         return doc
 
     def save_iq(self, path: str) -> None:
@@ -410,14 +410,11 @@ def analyze_file(path: str, fs: float | None = None, fmt: str | None = None,
 
 def analyze_web(x: np.ndarray, meta: Meta, *, burst: int | None = None) -> dict:
     """Payload for POST /api/analyze: the analyze() result as JSON, plus -- on the first
-    load of a multi-burst capture -- a whole-record waterfall so the UI can draw the burst
-    map. Burst re-selection posts again with ?burst=N and skips the overview (the UI keeps
-    the one it already has)."""
+    load of a multi-burst capture -- a whole-record spectrogram strip so the UI can draw
+    the burst map. Burst re-selection posts again with ?burst=N and skips the overview
+    (the UI keeps the one it already has)."""
     r = analyze(x, meta, burst=burst)
     out = r.to_json()
     if burst is None and len(r.bursts) > 1:
-        xa = dsp.analytic(x)
-        xa = xa - xa.mean()
-        out["overview"] = {"n": int(xa.size), "fs": meta.fs,
-                           "waterfall": waterfall(xa, meta.fs)}
+        out["overview"] = {"n": int(x.size), "fs": meta.fs, "strip": strip(x, meta.fs)}
     return out

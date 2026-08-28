@@ -247,12 +247,11 @@ $("dlCsv").onclick = () => {
   saveBlob("signus_batch.csv", head + body, "text/csv");
 };
 
-/* --- burst map: whole-record waterfall with clickable time-burst boxes --- */
+/* --- burst map: whole-record spectrogram strip with clickable time-burst boxes --- */
 function renderBurstMap(ov, result) {
   show($("burstMap"));
   const n = ov.n || 1, bs = result.bursts || [];
-  paintWaterfall($("burstFall"), ov.waterfall, 150,
-                 bs.map((b, i) => [b.start / n, b.end / n, String(i + 1)]));
+  paintStrip($("burstFall"), ov.strip);
   const host = $("burstBoxes");
   host.innerHTML = "";
   bs.forEach((b, i) => {
@@ -264,7 +263,8 @@ function renderBurstMap(ov, result) {
     box.style.top = "0%"; box.style.height = "100%"; box.style.left = left + "%";
     box.style.width = Math.min(100 - left, Math.max(0.8, (b.end - b.start) / n * 100)) + "%";
     box.title = lbl;
-    box.innerHTML = `<span class="box-lbl">${lbl}</span>`;
+    box.innerHTML = `<span class="box-num">${i + 1}</span><span class="box-lane"></span>` +
+      `<span class="box-lbl">${lbl}</span>`;
     box.onclick = () => { state.burst = i; analyze(); };   // re-analyse that burst; map persists
     host.appendChild(box);
   });
@@ -444,35 +444,23 @@ function drawSpectrum(d) {
   g.fillText(tmax, w - g.measureText(tmax).width - 4, h - 4);
 }
 
-/* --- waterfall --- */
-function drawWaterfall(d) { paintWaterfall($("fallCanvas"), d.waterfall, 150); }
-function paintWaterfall(canvas, wf, hCss, marks) {
-  // sa 프로브의 PNG 와 같은 조판: 흑백(최대 235), 바닥 p25 + 대비폭 10..35dB 클램프,
-  // 가로=시간, 위=+주파수, 보간 없는 픽셀. marks 가 오면 위 번호 레인 + 아래 검출 띠.
-  const [g, w, h] = fit(canvas, hCss);
-  g.fillStyle = "#000"; g.fillRect(0, 0, w, h);
-  if (!wf || !wf.rows) return;
-  const lo = pct(wf.db, 0.25);
-  const rg = Math.max(10, Math.min(35, pct(wf.db, 0.995) - lo));
-  const img = g.createImageData(wf.rows, wf.bins);          // x=시간(row), y=주파수(bin)
-  for (let r = 0; r < wf.rows; r++) {
-    for (let b = 0; b < wf.bins; b++) {
-      const t = Math.max(0, Math.min(1, (wf.db[r * wf.bins + b] - lo) / rg));
-      const o = ((wf.bins - 1 - b) * wf.rows + r) * 4;      // +fs/2 가 위
-      img.data[o] = img.data[o + 1] = img.data[o + 2] = Math.round(t * 235);
-      img.data[o + 3] = 255;
-    }
+/* --- spectrogram strip (sa 프로브의 PNG 와 같은 조판) --- */
+function drawWaterfall(d) { paintStrip($("fallCanvas"), d.strip); }
+function paintStrip(canvas, st) {
+  // 서버가 sa 와 같은 규칙(흑백 0..235, hamming 256/128, p25+10..35dB, 열 최대 풀링)으로
+  // 만든 격자를 해상도 그대로 찍는다. CSS 의 image-rendering: pixelated 가 sa PNG 를
+  // 확대해 보는 것과 같은 방식으로 늘린다 -- 보간 뭉개짐이 없다.
+  const g = canvas.getContext("2d");
+  canvas.width = st && st.cols ? st.cols : 1;
+  canvas.height = st && st.rows ? st.rows : 1;
+  if (!st || !st.cols) { g.fillStyle = "#000"; g.fillRect(0, 0, 1, 1); return; }
+  const img = g.createImageData(st.cols, st.rows);
+  for (let k = 0; k < st.g.length; k++) {
+    const o = k * 4;
+    img.data[o] = img.data[o + 1] = img.data[o + 2] = st.g[k];
+    img.data[o + 3] = 255;
   }
-  createImageBitmap(img).then((bmp) => {
-    g.imageSmoothingEnabled = false;
-    g.drawImage(bmp, 0, 0, w, h);
-    if (!marks) return;
-    g.fillStyle = "#ebebeb"; g.font = "bold 11px ui-monospace, monospace";
-    marks.forEach(([a, b, num]) => {
-      g.fillRect(a * w, h - 6, Math.max(2, (b - a) * w), 4);         // 검출 띠
-      g.fillText(num, ((a + b) / 2) * w - g.measureText(num).width / 2, 12);  // 번호 레인
-    });
-  });
+  g.putImageData(img, 0, 0);
 }
 
 /* --- constellation playback (the headline) --- */
