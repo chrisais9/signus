@@ -427,14 +427,14 @@ function drawSpectrum(d) {
     const gx = fmin + (fmax - fmin) * k / 5;
     g.beginPath(); g.moveTo(X(gx), 0); g.lineTo(X(gx), h); g.stroke();
   }
-  const det = d.detected, half = det.baud / 2e3;
+  const det = d.detected, fca = Math.abs(det.fc) / 1e3, half = det.baud / 2e3;
   g.setLineDash([4, 4]);
-  for (const gf of [det.fc / 1e3 - half, det.fc / 1e3 + half]) {
+  for (const gf of [fca - half, fca + half]) {   // 단측(0..fs/2) 축 -- fc 는 접힌 절대값
     g.beginPath(); g.moveTo(X(gf), 0); g.lineTo(X(gf), h); g.stroke();
   }
   g.setLineDash([]);
   g.strokeStyle = "rgba(255,255,255,.6)";
-  g.beginPath(); g.moveTo(X(det.fc / 1e3), 0); g.lineTo(X(det.fc / 1e3), h); g.stroke();
+  g.beginPath(); g.moveTo(X(fca), 0); g.lineTo(X(fca), h); g.stroke();
   g.strokeStyle = "#ebebeb"; g.lineWidth = 1.2; g.beginPath();
   f.forEach((v, k) => (k ? g.lineTo(X(v), Y(db[k])) : g.moveTo(X(v), Y(db[k]))));
   g.stroke();
