@@ -8,7 +8,7 @@ def _db(p: np.ndarray) -> np.ndarray:
     return 10 * np.log10(p + 1e-20)
 
 
-def spectrum(x: np.ndarray, fs: float, bins: int = 256) -> dict:
+def spectrum(x: np.ndarray, fs: float, bins: int = 512) -> dict:
     """sa 프로브의 PSD 판과 같은 조판: 실수부 welch(nperseg<=2048), 단측 0..fs/2 (kHz).
     표시 칸으로 줄일 때는 최대 풀링 -- 좁은 바늘이 살아남게."""
     xd = x.real if np.iscomplexobj(x) else x
