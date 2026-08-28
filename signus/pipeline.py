@@ -123,7 +123,6 @@ class Result:
         }
         if views and self.burst_x is not None:
             doc["spectrum"] = spectrum(self.burst_x, self.meta.fs)
-            doc["strip"] = strip(self.burst_x, self.meta.fs)
         return doc
 
     def save_iq(self, path: str) -> None:

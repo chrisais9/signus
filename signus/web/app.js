@@ -306,7 +306,6 @@ function render(d) {
   animateGauge(lock, cls);
   renderParams(d);
   drawSpectrum(d);
-  drawWaterfall(d);
   startPlay(d);
 }
 function snrText(d) {
@@ -435,7 +434,7 @@ function drawSpectrum(d) {
   g.setLineDash([]);
   g.strokeStyle = "rgba(255,255,255,.6)";
   g.beginPath(); g.moveTo(X(fca), 0); g.lineTo(X(fca), h); g.stroke();
-  g.strokeStyle = "#ebebeb"; g.lineWidth = 1.2; g.beginPath();
+  g.strokeStyle = "#4da3ff"; g.lineWidth = 1.4; g.beginPath();   // 파란선 (바늘이 주인공)
   f.forEach((v, k) => (k ? g.lineTo(X(v), Y(db[k])) : g.moveTo(X(v), Y(db[k]))));
   g.stroke();
   g.fillStyle = "rgba(255,255,255,.6)"; g.font = "10px sans-serif";
@@ -444,8 +443,7 @@ function drawSpectrum(d) {
   g.fillText(tmax, w - g.measureText(tmax).width - 4, h - 4);
 }
 
-/* --- spectrogram strip (sa 프로브의 PNG 와 같은 조판) --- */
-function drawWaterfall(d) { paintStrip($("fallCanvas"), d.strip); }
+/* --- spectrogram strip (sa 프로브의 PNG 와 같은 조판, 버스트 지도 전용) --- */
 function paintStrip(canvas, st) {
   // 서버가 sa 와 같은 규칙(흑백 0..235, hamming 256/128, p25+10..35dB, 열 최대 풀링)으로
   // 만든 격자를 해상도 그대로 찍는다. CSS 의 image-rendering: pixelated 가 sa PNG 를
